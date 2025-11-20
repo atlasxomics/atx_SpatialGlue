@@ -1,0 +1,43 @@
+name: spatialglue
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.8
+  - pip
+
+  # Core scientific stack
+  - numpy=1.22.3
+  - pandas=1.4.2
+  - scipy=1.8.1
+  - scikit-learn=1.1.1
+  - matplotlib=3.4.2
+  - tqdm=4.64.0
+
+  # AnnData / Scanpy ecosystem
+  - anndata=0.8.0
+  - scanpy=1.9.1
+
+  # R interoperability
+  - r-base=4.0.3
+  - rpy2=3.4.1
+
+  # PyTorch + CUDA
+  - pytorch=1.8.1
+  - cudatoolkit=10.2
+
+  # ---- FIX FOR "iJIT_NotifyEvent" / MKL 2024.x ISSUE ----
+  # These pins prevent conda from upgrading MKL to 2024.1+
+  # which is incompatible with PyTorch 1.8.1 and causes:
+  #   ImportError: undefined symbol: iJIT_NotifyEvent
+  - mkl<2024.1
+  - mkl-include<2024.1
+  - mkl-devel<2024.1
+
+  # pip packages
+  - pip:
+      - requests
+      - scikit-misc==0.2.0
+      # -r requirements.txt
