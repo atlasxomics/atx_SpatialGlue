@@ -45,10 +45,13 @@ run conda config --set auto_activate_base false
 copy environment.yml /opt/latch/environment.yaml
 run mamba env create \
     --file /opt/latch/environment.yaml \
-    --name spatialglue
+    --name spatialglue --yes
 env PATH=/opt/conda/envs/spatialglue/bin:$PATH
 
+# Install latch (pyflyte) inside the conda env so serialization sees workflow deps
+run pip install latch==2.53.10
 run pip install SpatialGlue==1.1.5
+run pip install leidenalg==0.10.2
 
 # Copy workflow data (use .dockerignore to skip files)
 copy . /root/
