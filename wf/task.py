@@ -3,6 +3,7 @@ import os
 import pickle
 import random
 import subprocess
+import sys
 
 import leidenalg
 import numpy as np
@@ -12,13 +13,20 @@ import torch
 from SpatialGlue.preprocess import lsi, construct_neighbor_graph
 from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
-from latch.resources.tasks import small_gpu_task
+from latch.resources.tasks import medium_task
 from latch.types import LatchDir, LatchFile
 
 import wf.utils as utils
 
 
-@small_gpu_task(retries=0)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+
+@medium_task
 def glue_task(
     project_name: str,
     atac_anndata: LatchFile,
@@ -26,7 +34,7 @@ def glue_task(
 ) -> LatchDir:
 
     # ------------------ Initialize ---------------------
-    logging.info("Starting Workflow...")
+    logging.info("Starting glue task...")
     out_dir = f"/root/{project_name}"
     os.makedirs(out_dir, exist_ok=True)
 
@@ -36,8 +44,10 @@ def glue_task(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(42)
 
-    logging.info("Reading AnnData...")
+    logging.info("Reading WT AnnData...")
     rna = sc.read_h5ad(wt_anndata.local_path)
+
+    logging.info("Reading ATAC AnnData...")
     atac = sc.read_h5ad(atac_anndata.local_path)
 
     print("n_obs RNA:", rna.n_obs, " n_obs ATAC:", atac.n_obs)
@@ -45,11 +55,12 @@ def glue_task(
     print("ATAC obs_names examples:", list(map(str, atac.obs_names[:5])))
 
     # -------------------- Align by XY --------------------
-
+    logging.info(f"Matching by exact coords: {rna.n_obs}")
     rna_matched, atac_matched = utils.align_by_xy_exact(rna, atac)
-    logging.info("Matched by exact coords: {rna_matched.n_obs}")
+    logging.info(f"Matched by exact coords: {rna_matched.n_obs}")
 
     # -------------------- ATAC cleanup + LSI --------------------
+    logging.info("Cleaning ATAC AnnData...")
     # Ensure CSR for speed (if sparse)
     if hasattr(atac_matched.X, "tocsr"):
         atac_matched.X = atac_matched.X.tocsr()
@@ -62,36 +73,45 @@ def glue_task(
         print(f"Dropping {(~keep_var).sum()} zero-count peaks")
         atac_matched = atac_matched[:, keep_var].copy()
 
+    logging.info("LSI on ATAC AnnData...")
     # LSI (stores in .obsm["X_lsi"])
     lsi(atac_matched, use_highly_variable=False, n_components=51)
     atac_matched.obsm["feat"] = atac_matched.obsm["X_lsi"].astype("float32")
 
     # -------------------- RNA features (PCA) with HVG guard ------------------
+    logging.info("Adding feat to WT AnnData...")
     if "feat" not in rna_matched.obsm:  # Should we plan for reusing wf outputs
 
+        logging.info("HVG to WT AnnData...")
         # Run PCA on top 50 components to match atac
         hvgs = rna_matched.var["highly_variable"]
         tmp = rna_matched[:, hvgs].copy()
         tmp.X = rna_matched.layers["counts"][:, hvgs]
 
+        logging.info("PCA on WT AnnData...")
         sc.tl.pca(tmp, n_comps=50)
         rna_matched.obsm["feat"] = tmp.obsm["X_pca"].astype("float32")
 
     # -------------------- Train SpatialGlue --------------------
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+    logging.info("construct_neighbor_graph...")
     data = construct_neighbor_graph(
         rna_matched, atac_matched, datatype="Spatial-epigenome-transcriptome"
     )
+
+    logging.info("Train_SpatialGlue...")
     model = Train_SpatialGlue(
         data, datatype="Spatial-epigenome-transcriptome", device=device
     )
+    logging.info("training...")
     out = model.train()
 
     rna_result = data["adata_omics1"]
     atac_result = data["adata_omics2"]
 
     # Collect embeddings/weights on an AnnData for downstream analysis
+    logging.info("copy data...")
     adata = rna_result.copy()
     adata.obsm["SpatialGlue"] = out["SpatialGlue"]
     adata.obsm["alpha"] = out.get("alpha")
@@ -99,6 +119,7 @@ def glue_task(
     adata.obsm["alpha_omics2"] = out.get("alpha_omics2")
 
     # -------------------- Neighbors/UMAP/Leiden --------------------
+    logging.info("clustering on spatialglue dims...")
     sc.pp.neighbors(adata, use_rep="SpatialGlue", n_neighbors=50)
     sc.tl.umap(adata)
 
@@ -116,6 +137,7 @@ def glue_task(
     )
 
     # -------------------- Plots (merged and raw) --------------------
+    logging.info("Plotting figures...")
     sc.pl.umap(adata, color=["sg_leiden_merged"], save="umap_merged.pdf")
     sc.pl.embedding(
         adata,
@@ -133,6 +155,7 @@ def glue_task(
     )
 
     # -------------------- Save data --------------------
+    logging.info("Writing data...")
     atac_result.write(f"{out_dir}/atac.h5ad")
     rna_result.write(f"{out_dir}/rna.h5ad")
 
@@ -141,4 +164,4 @@ def glue_task(
 
     subprocess.run([f"mv /root/figures/* {out_dir}"], shell=True)
 
-    return LatchDir(out_dir, f"latch:///glue_out/{project_name}")
+    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")

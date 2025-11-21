@@ -1,12 +1,21 @@
 """ ATX Workflow for running SpatialGlue of whole transcriptome + ATAC
 """
 import logging
+import sys
 
 from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
 from wf.task import glue_task
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+logging.info("This will go into output.log from __init__.py")
 
 metadata = LatchMetadata(
     display_name="atx_glue",
@@ -37,8 +46,6 @@ def glue_wf(
     atac_anndata: LatchFile,
     wt_anndata: LatchFile
 ) -> LatchDir:
-
-    logging.info("Workflow start...")
 
     return glue_task(
         project_name=project_name,

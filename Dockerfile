@@ -17,6 +17,7 @@ shell [ \
 ]
 env TZ='Etc/UTC'
 env LANG='en_US.UTF-8'
+env PYTHONUNBUFFERED=1
 
 arg DEBIAN_FRONTEND=noninteractive
 
