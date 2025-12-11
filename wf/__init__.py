@@ -7,15 +7,13 @@ from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
-from wf.task import glue_task
+from wf.task import corr_task, glue_task
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-
-logging.info("This will go into output.log from __init__.py")
 
 metadata = LatchMetadata(
     display_name="atx_glue",
@@ -25,14 +23,27 @@ metadata = LatchMetadata(
     parameters={
         "project_name": LatchParameter(
             display_name="Project Name",
+            description="Name of output directory in glue_outs/",
             batch_table_column=True,
         ),
-        "atac_anndata": LatchParameter(
-            display_name="ATAC AnnData",
+        "epigenomic_anndata": LatchParameter(
+            display_name="Epigenomic AnnData",
+            description="H5AD file containing an AnnData object with a tile \
+                matrix as .X; in AtlasXomics Workflows, this is typically \
+                named 'combined.h5ad'.",
             batch_table_column=True,
         ),
         "wt_anndata": LatchParameter(
             display_name="Transcriptome AnnData",
+            description="H5AD file containing an AnnData object with gene \
+                expression data as .X.",
+            batch_table_column=True,
+        ),
+        "ge_anndata": LatchParameter(
+            display_name="Gene Accessiblity AnnData",
+            description="H5AD file containing an AnnData object with gene \
+                accesibility data as .X; in AtlasXomics Workflows, this is \
+                typically named 'combined_ge.h5ad'.",
             batch_table_column=True,
         ),
     },
@@ -44,19 +55,29 @@ metadata = LatchMetadata(
 def glue_wf(
     project_name: str,
     atac_anndata: LatchFile,
-    wt_anndata: LatchFile
+    wt_anndata: LatchFile,
+    ge_anndata: LatchFile
 ) -> LatchDir:
 
-    return glue_task(
+    results = glue_task(
         project_name=project_name,
         atac_anndata=atac_anndata,
         wt_anndata=wt_anndata
     )
 
+    results = corr_task(
+        project_name=project_name,
+        results_dir=results,
+        ge_anndata=ge_anndata
+    )
+
+    return results
+
 
 if __name__ == "__main__":
-    glue_task(
+    from latch.types import LatchDir
+    corr_task(
         project_name="D01887_develop",
-        atac_anndata=LatchFile("latch://13502.account/snap_outs/Co_pro_D01887_ATAC/combined.h5ad"),
-        wt_anndata=LatchFile("latch://13502.account/rnaSeqQC_output/D01887_NG05558_000729_star/optimize_outs/set1_cr1-0-nc30-nn15-md0-5-sp1-0/combined.h5ad")
+        results_dir=LatchDir("latch://13502.account/glue_outs/D01887_00000802"),
+        ge_anndata=LatchFile("latch://13502.account/snap_outs/Co_pro_D01887_ATAC/combined_ge.h5ad")
     )

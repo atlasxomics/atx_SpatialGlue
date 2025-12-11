@@ -1,65 +1,27 @@
 import numpy as np
-import warnings
-from typing import List
-
 import pandas as pd
+import warnings
 
 from anndata import AnnData
+from scipy import sparse
 from scipy.spatial.distance import cdist
+from typing import Optional
 
 
-def align_by_xy_exact(rna: AnnData, atac: AnnData) -> List[AnnData]:
-    """
-    Align RNA and ATAC by exact integer (x,y) match from .obsm['spatial'].
-    Returns rna_matched, atac_matched, merged_table.
-    """
-    if "spatial" not in rna.obsm or "spatial" not in atac.obsm:
-        raise KeyError(
-            "Both RNA and ATAC must have obsm['spatial'] coordinates."
-        )
-    rxy = np.rint(rna.obsm["spatial"]).astype(int)
-    axy = np.rint(atac.obsm["spatial"]).astype(int)
-
-    rdf = (pd.DataFrame(rxy, index=rna.obs_names, columns=["x", "y"])
-             .reset_index().rename(columns={"index": "rna_id"}))
-    adf = (pd.DataFrame(axy, index=atac.obs_names, columns=["x", "y"])
-             .reset_index().rename(columns={"index": "atac_id"}))
-
-    m = adf.merge(rdf, on=["x", "y"], how="inner")
-    if m.empty:
-        raise RuntimeError(
-            "No exact (x,y) matches. Try NN matching with a tolerance."
-        )
-
-    # enforce 1:1 mapping if duplicates exist
-    m = m.drop_duplicates(subset=["atac_id"])
-    m = m.drop_duplicates(subset=["rna_id"])
-
-    r_idx = rna.obs_names.get_indexer(m["rna_id"])
-    a_idx = atac.obs_names.get_indexer(m["atac_id"])
-    assert (r_idx >= 0).all() and (a_idx >= 0).all()
-
-    rna_m = rna[r_idx, :].copy()
-    atac_m = atac[a_idx, :].copy()
-
-    # unify obs_names (use coords)
-    coord_names = [f"{int(x)}_{int(y)}" for x, y in zip(m["x"], m["y"])]
-    rna_m.obs_names = coord_names
-    atac_m.obs_names = coord_names
-
-    # sanity
-    assert (rna_m.obs_names == atac_m.obs_names).all(), "Matched RNA/ATAC names misaligned"
-
-    return rna_m, atac_m
+def clean_ids(ix):
+    s = pd.Index(ix).astype(str).str.strip()
+    s = s.str.replace(r".*#", "", regex=True)  # drop sample prefix like 'D01887#'
+    s = s.str.replace(r"-\d+$", "", regex=True)  # drop trailing '-1'
+    return s
 
 
 def merge_small_clusters(
-    adata,
-    cluster_key="sg_leiden",
-    embed_key="SpatialGlue",   # could be "spatial" or "X_umap"
-    min_cells=20,
-    new_key=None,
-    verbose=True,
+    adata: AnnData,
+    cluster_key: str = "sg_leiden",
+    embed_key: str = "SpatialGlue",
+    min_cells: int = 20,
+    new_key: Optional[str] = None,
+    verbose: bool = True,
 ):
     """
     Merge clusters smaller than `min_cells` into the nearest larger cluster
@@ -154,3 +116,7 @@ def merge_small_clusters(
         print(post_counts.to_string())
 
     return adata
+
+
+def to_dense(X):
+    return X.toarray() if sparse.issparse(X) else X

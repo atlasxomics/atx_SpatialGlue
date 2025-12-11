@@ -10,14 +10,18 @@ import numpy as np
 import scanpy as sc
 import torch
 
+from scipy import sparse
+
 from SpatialGlue.preprocess import lsi, construct_neighbor_graph
 from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
-from latch.resources.tasks import medium_task
+from latch.resources.tasks import custom_task, medium_task
 from latch.types import LatchDir, LatchFile
 
+import wf.correlation as corr
+import wf.genestats as gs
+import wf.plotting as pl
 import wf.utils as utils
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,10 +58,21 @@ def glue_task(
     print("\nRNA obs_names examples:", list(map(str, rna.obs_names[:5])))
     print("ATAC obs_names examples:", list(map(str, atac.obs_names[:5])))
 
-    # -------------------- Align by XY --------------------
-    logging.info(f"Matching by exact coords: {rna.n_obs}")
-    rna_matched, atac_matched = utils.align_by_xy_exact(rna, atac)
-    logging.info(f"Matched by exact coords: {rna_matched.n_obs}")
+    rna.obs_names = utils.clean_ids(rna.obs_names)
+    atac.obs_names = utils.clean_ids(atac.obs_names)
+
+    common = rna.obs_names.intersection(atac.obs_names)
+
+    if len(common) == 0:
+        raise RuntimeError(
+            "Could not find common cells between transcriptome and gene accessibility data; please ensure the input files are from the same experiment."
+        )
+
+    rna_matched = rna[common, :].copy()
+    atac_matched = atac[common, :].copy()
+    atac_matched = atac_matched[atac_matched.obs_names.get_indexer(rna_matched.obs_names), :].copy()
+
+    assert (rna_matched.obs_names == atac_matched.obs_names).all()
 
     # -------------------- ATAC cleanup + LSI --------------------
     logging.info("Cleaning ATAC AnnData...")
@@ -154,14 +169,123 @@ def glue_task(
         save="spatial_umap_unmerged.pdf"
     )
 
+    # Export coverage for newly assigned clusters
+
     # -------------------- Save data --------------------
     logging.info("Writing data...")
-    atac_result.write(f"{out_dir}/atac.h5ad")
-    rna_result.write(f"{out_dir}/rna.h5ad")
+    atac_result.write(f"{out_dir}/atac.h5ad") # add prefix 'glue' to og name
+    rna_result.write(f"{out_dir}/rna.h5ad")   # add prefix 'glue' to og name
 
     with open(f"{out_dir}/SpatialGlue_model.pickle", "wb") as f:
         pickle.dump(out, f)
 
     subprocess.run([f"mv /root/figures/* {out_dir}"], shell=True)
+
+    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
+
+
+@custom_task(cpu=8, memory=200, storage_gib=1000)
+def corr_task(
+    project_name: str,
+    results_dir: LatchDir,
+    ge_anndata: LatchFile
+) -> LatchDir:
+
+    out_dir = f"/root/{project_name}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Download and read data -----------------------------------------------
+    logging.info("Downloading RNA data...")
+    # Add check if exists on latch
+    rna_path = LatchFile(f"{results_dir.remote_path}/rna.h5ad").local_path
+
+    logging.info("Downloading Gene Accessibility data...")
+    ge_path = ge_anndata.local_path
+
+    print(rna_path)
+    print(ge_path)
+
+    logging.info("Reading RNA data...")
+    rna = sc.read_h5ad(rna_path)
+    logging.info("Reading Gene Accessibility data...")
+    ge = sc.read_h5ad(ge_path)
+
+    logging.info("Preparing data for correlation...")
+    # Get Spearman correlation table -----------------------------------------
+    rna.obs_names = utils.clean_ids(rna.obs_names)
+    ge.obs_names = utils.clean_ids(ge.obs_names)
+
+    rna.var_names_make_unique()
+    ge.var_names_make_unique()
+
+    # Reduce both to common genes/cells and align
+    rna_sub, ge_sub = corr.synch_adata(rna, ge)
+
+    genes = rna_sub.var_names
+
+    logging.info("Ensuring dense matrix...")
+    # Ensure both matrices to dense
+    X_rna = utils.to_dense(rna_sub.X).astype(np.float32)  # Need to select log1p or make if not available
+    X_ge = utils.to_dense(ge_sub.X).astype(np.float32)
+
+    logging.info("Transforming gene accessibility to log1p...")
+    X_ge_norm = corr.log_norm(X_ge, 1e4)  # This should only log
+
+    logging.info("Computing correlations...")
+    res = corr.get_corr_df(X_rna, X_ge_norm, genes)
+
+    res_path = os.path.join(out_dir, "atac-ge_vs_rna_spearman.csv")
+    res.to_csv(res_path, index=False)
+    logging.info(f"Saved Spearman results: {res_path}")
+
+    # Gene stats ------------------------------------------------------------
+    # Ensure we use 'counts'
+    X_rna_counts, rna_source = gs.get_rna_counts_matrix(rna_sub)
+    rna_stats = gs.compute_gene_stats_matrix(
+        X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
+    )
+
+    # Pre-log1p, but still normalized from ArchR
+    X_ge_raw = ge_sub.X
+    ge_raw_stats = gs.compute_gene_stats_matrix(
+        X_ge_raw, genes, prefix="ge_raw", include_minmax_nonzero=True
+    )
+
+    ge_norm_stats = gs.compute_gene_stats_matrix(
+        sparse.csr_matrix(X_ge_norm),
+        genes,
+        prefix="ge_norm",
+        include_minmax_nonzero=False
+    )
+
+    # Merge all stats + your correlation results
+    stats = (
+        rna_stats.merge(ge_raw_stats, on="gene", how="inner")
+        .merge(ge_norm_stats, on="gene", how="inner")
+        .merge(res, on="gene", how="inner")
+    )
+
+    stats_path = os.path.join(out_dir, "gene_stats.csv")
+    stats.to_csv(stats_path, index=False)
+    logging.info(f"Saved: {stats_path} (RNA counts source: {rna_source})")
+
+    bar_path = os.path.join(out_dir, "top_genes_bar.pdf")
+    logging.info(f"Saving top correlated genes figure to {bar_path}")
+    pl.plot_top_genes_bar(res, n=20, fdr_thresh=0.05, outpath=bar_path)
+
+    volcano_path = os.path.join(out_dir, "corr_volcano.pdf")
+    logging.info(f"Saving volcano to {volcano_path}")
+    pl.plot_corr_volcano_broken(
+        res,
+        outpath=volcano_path,
+        q_thresh=0.05,
+        rho_thresh=0.1,
+        y_low=(0, 300),       # bottom panel exactly 0–300
+        y_high=(308, None),   # top panel starts at 308; upper bound auto
+        jitter_y=0.3,         # keep points from crossing the break
+        top_pos_labels=10,
+        top_neg_labels=10,
+        title="Correlation volcano"
+    )
 
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
