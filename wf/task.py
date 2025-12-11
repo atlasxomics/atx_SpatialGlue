@@ -80,7 +80,7 @@ def glue_task(
     if hasattr(atac_matched.X, "tocsr"):
         atac_matched.X = atac_matched.X.tocsr()
 
-    # Drop zero-count peaks/spots
+    # Drop zero-count peaks/tiles
     peak_sums = np.array(atac_matched.X.sum(axis=0)).ravel()
 
     keep_var = peak_sums > 0
@@ -172,9 +172,13 @@ def glue_task(
     # Export coverage for newly assigned clusters
 
     # -------------------- Save data --------------------
+    # Copy new clustering results
+    rna_result.obs["glue_clsusters"] = adata.obs.loc[rna_result.obs_names, "sg_leiden"].values
+    atac_result.obs["glue_clsusters"] = adata.obs.loc[atac_result.obs_names, "sg_leiden"].values
+
     logging.info("Writing data...")
-    atac_result.write(f"{out_dir}/atac.h5ad") # add prefix 'glue' to og name
-    rna_result.write(f"{out_dir}/rna.h5ad")   # add prefix 'glue' to og name
+    atac_result.write(f"{out_dir}/atac_glue.h5ad")
+    rna_result.write(f"{out_dir}/rna_glue.h5ad")
 
     with open(f"{out_dir}/SpatialGlue_model.pickle", "wb") as f:
         pickle.dump(out, f)
@@ -201,9 +205,6 @@ def corr_task(
 
     logging.info("Downloading Gene Accessibility data...")
     ge_path = ge_anndata.local_path
-
-    print(rna_path)
-    print(ge_path)
 
     logging.info("Reading RNA data...")
     rna = sc.read_h5ad(rna_path)
@@ -281,7 +282,7 @@ def corr_task(
         q_thresh=0.05,
         rho_thresh=0.1,
         y_low=(0, 300),       # bottom panel exactly 0–300
-        y_high=(308, None),   # top panel starts at 308; upper bound auto
+        y_high=(300, 311),   # top panel starts at 308; upper bound auto
         jitter_y=0.3,         # keep points from crossing the break
         top_pos_labels=10,
         top_neg_labels=10,
