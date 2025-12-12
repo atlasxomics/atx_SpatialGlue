@@ -53,6 +53,7 @@ env PATH=/opt/conda/envs/spatialglue/bin:$PATH
 run pip install latch==2.53.10
 run pip install SpatialGlue==1.1.5
 run pip install leidenalg==0.10.2
+run pip install snapatac2
 
 # Copy workflow data (use .dockerignore to skip files)
 copy . /root/

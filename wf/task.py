@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import pickle
@@ -8,6 +9,7 @@ import sys
 import leidenalg
 import numpy as np
 import scanpy as sc
+import snapatac2 as snap
 import torch
 
 from scipy import sparse
@@ -173,8 +175,22 @@ def glue_task(
 
     # -------------------- Save data --------------------
     # Copy new clustering results
-    rna_result.obs["glue_clsusters"] = adata.obs.loc[rna_result.obs_names, "sg_leiden"].values
-    atac_result.obs["glue_clsusters"] = adata.obs.loc[atac_result.obs_names, "sg_leiden"].values
+    rna_result.obs["glue_clusters"] = adata.obs.loc[rna_result.obs_names, "sg_leiden"].values
+    atac_result.obs["glue_clusters"] = adata.obs.loc[atac_result.obs_names, "sg_leiden"].values
+
+    logging.info("Creating coverages for new clusters...")
+    coverage_dir = f"{out_dir}/glue_cluster_coverages"
+    os.makedirs(coverage_dir, exist_ok=True)
+    snap.ex.export_coverage(
+        atac_result,
+        groupby="glue_clusters",
+        suffix="_cluster.bw",
+        bin_size=10,
+        output_format="bigwig",
+    )
+    bws = glob.glob("*.bw")
+    subprocess.run(["mv"] + bws + [coverage_dir])
+    logging.info("Finished coverages for new clusters...")
 
     logging.info("Writing data...")
     atac_result.write(f"{out_dir}/atac_glue.h5ad")
@@ -263,7 +279,7 @@ def corr_task(
     stats = (
         rna_stats.merge(ge_raw_stats, on="gene", how="inner")
         .merge(ge_norm_stats, on="gene", how="inner")
-        .merge(res, on="gene", how="inner")
+        .merge(res, on="gene", how="inner") 
     )
 
     stats_path = os.path.join(out_dir, "gene_stats.csv")
