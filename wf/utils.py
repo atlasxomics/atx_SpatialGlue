@@ -133,27 +133,40 @@ def ensure_var_gene_symbols(
     except RuntimeError as err:
         for col in ["geneName", "gene_name", "gene_symbols"]:
             if col in adata.var.columns:
-                names = validate_var_gene_symbols(
-                    adata.var[col], f"{context} var['{col}']", min_fraction
-                )
-                adata.var_names = pd.Index(names)
-                logging.warning(
-                    f"{context}: var_names invalid; replaced with var['{col}'] gene symbols"
-                )
-                return adata.var_names
-        message(
-            typ="error",
-            data={
-                "title": "Missing gene names",
-                "body": """Cannot find gene names in var.  Please use an
-                    AnnData object with var set to genes with gene symbols
-                    contained in var_names.  If using outputs from the RNAQC
-                    Workflow, please select the .h5ad file in the optimize_outs
-                    directory, NOT the top directory."""
-            }
-        )
+                try:
+                    names = validate_var_gene_symbols(
+                        adata.var[col], f"{context} var['{col}']", min_fraction
+                    )
+                    adata.var_names = pd.Index(names)
+                    message(
+                        typ="warning",
+                        data={
+                            "title": "Reassigned var_names",
+                            "body": f"""var_names were not found to contain a
+                            majority of gene symbols.  Reassigned var_names to
+                            {col}."""
+                        }
+                    )
+                    logging.warning(
+                        f"{context}: var_names invalid; replaced with var['{col}'] gene symbols"
+                    )
+                    return adata.var_names
+                except RuntimeError:
+                    message(
+                        typ="warning",
+                        data={
+                            "title": "Attempted reassign",
+                            "body": f"""var_names were not found to contain a
+                            majority of gene symbols. Attempted to reassign
+                            barcodes with to {col}, but this did not have a
+                            sufficient proportion of gene symbols."""
+                        }
+                    )
+                    logging.warning(
+                        f"{context}:var_names invalid; attempted to replace with var['{col}']."
+                    )
         raise RuntimeError(
-            f"{context}: var_names invalid and no valid gene symbol column found"
+            f"{context}: obs_names invalid and no valid 'barcode'/'barcodes' column found"
         ) from err
 
 

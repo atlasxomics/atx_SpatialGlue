@@ -60,10 +60,10 @@ def glue_task(
     logging.info(f"\nRNA obs_names examples: {list(map(str, rna.obs_names[:5]))}")
     logging.info(f"ATAC obs_names examples: {list(map(str, atac.obs_names[:5]))}")
 
-    rna.obs_names = utils.ensure_obs_barcodes(rna, "WT RNA")
-    atac.obs_names = utils.ensure_obs_barcodes(atac, "ATAC")
+    rna.obs_names = utils.ensure_obs_barcodes(rna, "RNA")
+    atac.obs_names = utils.ensure_obs_barcodes(atac, "ATAC")di
 
-    rna.var_names = utils.ensure_var_gene_symbols(rna, "WT RNA")
+    rna.var_names = utils.ensure_var_gene_symbols(rna, "RNA", min_fraction=0.5)
 
     rna.obs_names = utils.clean_ids(rna.obs_names)
     atac.obs_names = utils.clean_ids(atac.obs_names)
@@ -235,11 +235,12 @@ def corr_task(
     ge = sc.read_h5ad(ge_path)
 
     logging.info("Preparing data for correlation...")
-    rna.obs_names = utils.ensure_obs_barcodes(rna, "RNA (corr_task)")
-    ge.obs_names = utils.ensure_obs_barcodes(ge, "Gene accessibility (corr_task)")
+    rna.obs_names = utils.ensure_obs_barcodes(rna, "RNA")
+    ge.obs_names = utils.ensure_obs_barcodes(ge, "Gene accessibility")
 
-    rna.var_names = utils.ensure_var_gene_symbols(rna, "RNA (corr_task)")
-    ge.var_names = utils.ensure_var_gene_symbols(ge, "Gene accessibility (corr_task)")
+    # Make sure at least half are gene symbols
+    rna.var_names = utils.ensure_var_gene_symbols(rna, "RNA", min_fraction=0.5)
+    ge.var_names = utils.ensure_var_gene_symbols(ge, "GE", min_fraction=0.5)
 
     # Get Spearman correlation table -----------------------------------------
     rna.obs_names = utils.clean_ids(rna.obs_names)
