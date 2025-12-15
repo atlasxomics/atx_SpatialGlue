@@ -56,9 +56,14 @@ def glue_task(
     logging.info("Reading ATAC AnnData...")
     atac = sc.read_h5ad(atac_anndata.local_path)
 
-    print("n_obs RNA:", rna.n_obs, " n_obs ATAC:", atac.n_obs)
-    print("\nRNA obs_names examples:", list(map(str, rna.obs_names[:5])))
-    print("ATAC obs_names examples:", list(map(str, atac.obs_names[:5])))
+    logging.info(f"n_obs RNA: {rna.n_obs} n_obs ATAC: {atac.n_obs}")
+    logging.info(f"\nRNA obs_names examples: {list(map(str, rna.obs_names[:5]))}")
+    logging.info(f"ATAC obs_names examples: {list(map(str, atac.obs_names[:5]))}")
+
+    rna.obs_names = utils.ensure_obs_barcodes(rna, "WT RNA")
+    atac.obs_names = utils.ensure_obs_barcodes(atac, "ATAC")
+
+    rna.var_names = utils.ensure_var_gene_symbols(rna, "WT RNA")
 
     rna.obs_names = utils.clean_ids(rna.obs_names)
     atac.obs_names = utils.clean_ids(atac.obs_names)
@@ -67,7 +72,9 @@ def glue_task(
 
     if len(common) == 0:
         raise RuntimeError(
-            "Could not find common cells between transcriptome and gene accessibility data; please ensure the input files are from the same experiment."
+            "Could not find common cells between transcriptome and gene"
+            "accessibility data; please ensure the input files are from the"
+            "same experiment."
         )
 
     rna_matched = rna[common, :].copy()
@@ -217,7 +224,7 @@ def corr_task(
     # Download and read data -----------------------------------------------
     logging.info("Downloading RNA data...")
     # Add check if exists on latch
-    rna_path = LatchFile(f"{results_dir.remote_path}/rna.h5ad").local_path
+    rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
 
     logging.info("Downloading Gene Accessibility data...")
     ge_path = ge_anndata.local_path
@@ -228,6 +235,12 @@ def corr_task(
     ge = sc.read_h5ad(ge_path)
 
     logging.info("Preparing data for correlation...")
+    rna.obs_names = utils.ensure_obs_barcodes(rna, "RNA (corr_task)")
+    ge.obs_names = utils.ensure_obs_barcodes(ge, "Gene accessibility (corr_task)")
+
+    rna.var_names = utils.ensure_var_gene_symbols(rna, "RNA (corr_task)")
+    ge.var_names = utils.ensure_var_gene_symbols(ge, "Gene accessibility (corr_task)")
+
     # Get Spearman correlation table -----------------------------------------
     rna.obs_names = utils.clean_ids(rna.obs_names)
     ge.obs_names = utils.clean_ids(ge.obs_names)
