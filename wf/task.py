@@ -17,6 +17,7 @@ from scipy import sparse
 from SpatialGlue.preprocess import lsi, construct_neighbor_graph
 from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
+from latch.functions.messages import message
 from latch.resources.tasks import custom_task, medium_task
 from latch.types import LatchDir, LatchFile
 
@@ -61,7 +62,7 @@ def glue_task(
     logging.info(f"ATAC obs_names examples: {list(map(str, atac.obs_names[:5]))}")
 
     rna.obs_names = utils.ensure_obs_barcodes(rna, "RNA")
-    atac.obs_names = utils.ensure_obs_barcodes(atac, "ATAC")di
+    atac.obs_names = utils.ensure_obs_barcodes(atac, "ATAC")
 
     rna.var_names = utils.ensure_var_gene_symbols(rna, "RNA", min_fraction=0.5)
 
@@ -255,15 +256,40 @@ def corr_task(
     genes = rna_sub.var_names
 
     logging.info("Ensuring dense matrix...")
-    # Ensure both matrices to dense
-    X_rna = utils.to_dense(rna_sub.X).astype(np.float32)  # Need to select log1p or make if not available
+    # Prefer monotonic transform (normalized/log1p/counts layers)
+    preferred_layers = ["normalized", "log1p", "counts"]
+    X_rna = None
+    for layer in preferred_layers:
+        if layer in rna_sub.layers:
+            logging.info(f"Using RNA layer '{layer}' for correlation")
+            message(
+                typ="info",
+                data={
+                    "title": "RNA Layers", "body":
+                    f"Using RNA layer '{layer}' for correlation"
+                }
+            )
+            X_rna = utils.to_dense(rna_sub.layers[layer]).astype(np.float32)
+            break
+    if X_rna is None:  # Fall back to .X with warning
+        logging.warning(
+            "RNA layers normalized/log1p/counts not found; using rna_sub.X"
+        )
+        message(
+            typ="warning",
+            data={
+                "title": "RNA Layers",
+                "body": """Using RNA .X for correlation analysis.  If
+                Transcriptome AnnData is from an RNAQC or optimize_wt Workflow,
+                this represents scaled data which is suboptimal for
+                correlations."""
+            }
+        )
+        X_rna = utils.to_dense(rna_sub.X).astype(np.float32)
     X_ge = utils.to_dense(ge_sub.X).astype(np.float32)
 
-    logging.info("Transforming gene accessibility to log1p...")
-    X_ge_norm = corr.log_norm(X_ge, 1e4)  # This should only log
-
     logging.info("Computing correlations...")
-    res = corr.get_corr_df(X_rna, X_ge_norm, genes)
+    res = corr.get_corr_df(X_rna, X_ge, genes)
 
     res_path = os.path.join(out_dir, "atac-ge_vs_rna_spearman.csv")
     res.to_csv(res_path, index=False)
@@ -276,14 +302,8 @@ def corr_task(
         X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
     )
 
-    # Pre-log1p, but still normalized from ArchR
-    X_ge_raw = ge_sub.X
-    ge_raw_stats = gs.compute_gene_stats_matrix(
-        X_ge_raw, genes, prefix="ge_raw", include_minmax_nonzero=True
-    )
-
-    ge_norm_stats = gs.compute_gene_stats_matrix(
-        sparse.csr_matrix(X_ge_norm),
+    ge_stats = gs.compute_gene_stats_matrix(
+        sparse.csr_matrix(X_ge),
         genes,
         prefix="ge_norm",
         include_minmax_nonzero=False
@@ -291,8 +311,7 @@ def corr_task(
 
     # Merge all stats + your correlation results
     stats = (
-        rna_stats.merge(ge_raw_stats, on="gene", how="inner")
-        .merge(ge_norm_stats, on="gene", how="inner")
+        rna_stats.merge(ge_stats, on="gene", how="inner")
         .merge(res, on="gene", how="inner") 
     )
 
