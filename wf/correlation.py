@@ -5,7 +5,7 @@ import sys
 
 from anndata import AnnData
 from numpy import ndarray
-from scipy.stats import spearmanr
+from scipy.stats import rankdata, t
 from statsmodels.stats.multitest import multipletests
 from typing import List, Tuple
 
@@ -23,21 +23,71 @@ def get_corr_df(
     genes: List[str],
     array1_name: str = "RNA",
     array2_name: str = "GA",
+    chunk_size: int = 1000,
 ) -> pd.DataFrame:
-    """"""
+    """Compute column-wise Spearman correlations with p-values/FDR.
 
-    rhos = np.empty(len(genes), dtype=np.float32)
-    pvals = np.empty(len(genes), dtype=np.float64)
+    The implementation ranks and correlates genes in chunks. This keeps the
+    output schema from the original scipy loop while avoiding one spearmanr
+    call per gene.
+    """
 
-    for j in range(len(genes)):
-        rho, p = spearmanr(array2[:, j], array1[:, j])
-        rhos[j] = np.nan_to_num(rho, nan=0.0)
-        pvals[j] = np.nan_to_num(p, nan=1.0)
+    array1 = np.asarray(array1)
+    array2 = np.asarray(array2)
+    gene_names = pd.Index(genes).astype(str)
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0.")
+    if array1.shape != array2.shape:
+        raise ValueError(
+            f"array1 and array2 must have the same shape; got "
+            f"{array1.shape} and {array2.shape}."
+        )
+
+    n_obs, n_genes = array1.shape
+    if n_genes != len(gene_names):
+        raise ValueError(
+            f"Number of genes ({len(gene_names)}) does not match matrix columns "
+            f"({n_genes})."
+        )
+
+    rhos = np.empty(n_genes, dtype=np.float32)
+    pvals = np.ones(n_genes, dtype=np.float64)
+    dof = n_obs - 2
+
+    for start in range(0, n_genes, chunk_size):
+        end = min(start + chunk_size, n_genes)
+        x = array1[:, start:end]
+        y = array2[:, start:end]
+
+        x_rank = np.apply_along_axis(rankdata, 0, x).astype(np.float32)
+        y_rank = np.apply_along_axis(rankdata, 0, y).astype(np.float32)
+
+        x_centered = x_rank - x_rank.mean(axis=0)
+        y_centered = y_rank - y_rank.mean(axis=0)
+        numerator = (x_centered * y_centered).sum(axis=0)
+        denominator = np.sqrt(
+            (x_centered ** 2).sum(axis=0) * (y_centered ** 2).sum(axis=0)
+        )
+
+        rho = np.divide(
+            numerator,
+            denominator,
+            out=np.zeros_like(numerator, dtype=np.float32),
+            where=denominator > 0,
+        )
+        rho = np.nan_to_num(rho, nan=0.0, posinf=0.0, neginf=0.0)
+        rhos[start:end] = rho.astype(np.float32)
+
+        if dof > 0:
+            clipped = np.clip(rho.astype(np.float64), -1 + 1e-15, 1 - 1e-15)
+            t_stat = clipped * np.sqrt(dof / ((1.0 - clipped) * (1.0 + clipped)))
+            p = 2.0 * t.sf(np.abs(t_stat), dof)
+            pvals[start:end] = np.where(denominator > 0, p, 1.0)
 
     _, qvals, _, _ = multipletests(pvals, method="fdr_bh")
 
     res = pd.DataFrame({
-        "gene": genes.astype(str).values,
+        "gene": gene_names.values,
         "spearman_rho": rhos,
         "pval": pvals,
         "qval_bh": qvals,

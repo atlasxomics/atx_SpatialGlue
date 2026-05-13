@@ -13,6 +13,7 @@ from typing import Optional
 from latch.functions.messages import message
 
 _BARCODE_REGEX = re.compile(r"([ATCG]{16})")
+_DONOR_PREFIX_REGEX = re.compile(r"(D\d{5})")
 _GENE_SYMBOL_REGEX = re.compile(r"^(?!ENS[A-Z]*\d+)[A-Za-z][A-Za-z0-9_.-]{0,30}$")
 
 
@@ -91,6 +92,54 @@ def ensure_obs_barcodes(
         raise RuntimeError(
             f"{context}: obs_names invalid and no valid 'barcode'/'barcodes' column found"
         ) from err
+
+
+def ensure_obs_run_barcodes(
+        adata: AnnData, context: str, min_fraction: float = 1.0
+):
+    """Return barcode IDs, preserving a Dxxxxx run prefix when available.
+
+    Examples:
+      D02735_NG09414#ACGT... -> D02735#ACGT...
+      D02735_NG09420#ACGT... -> D02735#ACGT...
+      ACGT...-1              -> ACGT...
+    """
+
+    original_names = pd.Index(adata.obs_names).astype(str)
+    barcodes = ensure_obs_barcodes(adata, context, min_fraction=min_fraction)
+    barcodes = pd.Index(barcodes).astype(str)
+
+    donor = original_names.str.extract(_DONOR_PREFIX_REGEX, expand=False)
+    for col in ["sample_name", "sample", "sample_id", "library_id", "batch"]:
+        if col not in adata.obs.columns:
+            continue
+        from_col = pd.Index(adata.obs[col]).astype(str).str.extract(
+            _DONOR_PREFIX_REGEX, expand=False
+        )
+        donor = pd.Index([
+            fallback if pd.isna(current) else current
+            for current, fallback in zip(donor, from_col)
+        ])
+
+    if donor.notna().any():
+        ids = pd.Index([
+            f"{d}#{bc}" if pd.notna(d) else bc
+            for d, bc in zip(donor, barcodes)
+        ])
+    else:
+        ids = barcodes
+
+    duplicated = ids[ids.duplicated()].unique()
+    if len(duplicated) > 0:
+        raise RuntimeError(
+            f"{context}: normalized obs IDs are not unique; examples: "
+            f"{duplicated[:5].tolist()}"
+        )
+
+    logging.info(
+        f"{context}: normalized obs IDs examples: {ids[:3].tolist()}"
+    )
+    return ids
 
 
 def validate_var_gene_symbols(
