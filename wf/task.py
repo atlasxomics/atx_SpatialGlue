@@ -703,21 +703,17 @@ def _write_cluster_correlation_outputs(
     plt.close(fig)
 
 
-@custom_task(cpu=8, memory=200, storage_gib=1000)
-def glue_task(
+@custom_task(cpu=4, memory=200, storage_gib=1000)
+def glue_preprocess_task(
     project_name: str,
     atac_anndata: LatchFile,
     wt_anndata: LatchFile,
     ge_anndata: LatchFile,
-    n_neighbors: int = 15,
-    min_cluster_size: int = 200,
-    resolutions: str = DEFAULT_RESOLUTIONS,
-    chosen_resolution: float = 0.0,
 ) -> LatchDir:
 
     # ------------------ Initialize ---------------------
-    logging.info("Starting glue task...")
-    out_dir = f"/root/{project_name}"
+    logging.info("Starting glue preprocessing task...")
+    out_dir = f"/root/{project_name}_preprocess"
     os.makedirs(out_dir, exist_ok=True)
 
     random.seed(SEED)
@@ -779,6 +775,54 @@ def glue_task(
     # -------------------- RNA features with HVG guard ------------------
     logging.info("Adding feat to WT AnnData...")
     _add_rna_features(rna_matched)
+
+    logging.info("Writing prepared SpatialGlue inputs...")
+    rna_matched.write(f"{out_dir}/rna_prepared.h5ad")
+    ge_matched.write(f"{out_dir}/ge_prepared.h5ad")
+    atac_tiles_matched.write(f"{out_dir}/atac_tiles_prepared.h5ad")
+
+    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}/preprocess")
+
+
+@custom_task(cpu=32, memory=100, storage_gib=1000)
+def glue_train_task(
+    project_name: str,
+    prepared_dir: LatchDir,
+    n_neighbors: int = 15,
+    min_cluster_size: int = 200,
+    resolutions: str = DEFAULT_RESOLUTIONS,
+    chosen_resolution: float = 0.0,
+) -> LatchDir:
+
+    # ------------------ Initialize ---------------------
+    logging.info("Starting glue training task...")
+    out_dir = f"/root/{project_name}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
+    logging.info("Reading prepared SpatialGlue inputs...")
+    rna_prepared_path = LatchFile(
+        f"{prepared_dir.remote_path}/rna_prepared.h5ad"
+    ).local_path
+    ge_prepared_path = LatchFile(
+        f"{prepared_dir.remote_path}/ge_prepared.h5ad"
+    ).local_path
+    atac_tiles_prepared_path = LatchFile(
+        f"{prepared_dir.remote_path}/atac_tiles_prepared.h5ad"
+    ).local_path
+
+    rna_matched = sc.read_h5ad(rna_prepared_path)
+    ge_matched = sc.read_h5ad(ge_prepared_path)
+    atac_tiles_matched = sc.read_h5ad(atac_tiles_prepared_path)
+    logging.info(
+        f"Prepared inputs loaded: RNA {rna_matched.shape}, "
+        f"GE {ge_matched.shape}, ATAC tiles {atac_tiles_matched.shape}"
+    )
 
     # -------------------- Train SpatialGlue --------------------
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

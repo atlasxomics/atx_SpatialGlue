@@ -8,7 +8,12 @@ from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
-from wf.task import DEFAULT_RESOLUTIONS, corr_task, glue_task
+from wf.task import (
+    DEFAULT_RESOLUTIONS,
+    corr_task,
+    glue_preprocess_task,
+    glue_train_task,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,11 +117,16 @@ def glue_wf(
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
 
-    results = glue_task(
+    prepared = glue_preprocess_task(
         project_name=project_name,
         atac_anndata=atac_anndata,
         wt_anndata=wt_anndata,
         ge_anndata=ge_anndata,
+    )
+
+    results = glue_train_task(
+        project_name=project_name,
+        prepared_dir=prepared,
         n_neighbors=n_neighbors,
         min_cluster_size=min_cluster_size,
         resolutions=resolutions,
