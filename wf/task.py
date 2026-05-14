@@ -784,7 +784,7 @@ def glue_preprocess_task(
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}/preprocess")
 
 
-@custom_task(cpu=32, memory=100, storage_gib=1000)
+@custom_task(cpu=126, memory=100, storage_gib=1000)
 def glue_train_task(
     project_name: str,
     rna_prepared_h5ad: LatchFile,
