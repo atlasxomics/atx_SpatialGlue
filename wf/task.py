@@ -787,7 +787,9 @@ def glue_preprocess_task(
 @custom_task(cpu=32, memory=100, storage_gib=1000)
 def glue_train_task(
     project_name: str,
-    prepared_dir: LatchDir,
+    rna_prepared_h5ad: LatchFile,
+    ge_prepared_h5ad: LatchFile,
+    atac_tiles_prepared_h5ad: LatchFile,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
     resolutions: str = DEFAULT_RESOLUTIONS,
@@ -806,19 +808,9 @@ def glue_train_task(
         torch.cuda.manual_seed_all(SEED)
 
     logging.info("Reading prepared SpatialGlue inputs...")
-    rna_prepared_path = LatchFile(
-        f"{prepared_dir.remote_path}/rna_prepared.h5ad"
-    ).local_path
-    ge_prepared_path = LatchFile(
-        f"{prepared_dir.remote_path}/ge_prepared.h5ad"
-    ).local_path
-    atac_tiles_prepared_path = LatchFile(
-        f"{prepared_dir.remote_path}/atac_tiles_prepared.h5ad"
-    ).local_path
-
-    rna_matched = sc.read_h5ad(rna_prepared_path)
-    ge_matched = sc.read_h5ad(ge_prepared_path)
-    atac_tiles_matched = sc.read_h5ad(atac_tiles_prepared_path)
+    rna_matched = sc.read_h5ad(rna_prepared_h5ad.local_path)
+    ge_matched = sc.read_h5ad(ge_prepared_h5ad.local_path)
+    atac_tiles_matched = sc.read_h5ad(atac_tiles_prepared_h5ad.local_path)
     logging.info(
         f"Prepared inputs loaded: RNA {rna_matched.shape}, "
         f"GE {ge_matched.shape}, ATAC tiles {atac_tiles_matched.shape}"

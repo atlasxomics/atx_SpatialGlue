@@ -2,7 +2,6 @@
 """
 import logging
 import sys
-from typing import Optional
 
 from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
@@ -10,8 +9,6 @@ from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
 from wf.task import (
     DEFAULT_RESOLUTIONS,
-    corr_task,
-    glue_preprocess_task,
     glue_train_task,
 )
 
@@ -32,24 +29,22 @@ metadata = LatchMetadata(
             description="Name of output directory in glue_outs/",
             batch_table_column=True,
         ),
-        "atac_anndata": LatchParameter(
-            display_name="Epigenomic AnnData",
-            description="H5AD file containing an AnnData object with a tile \
-                matrix as .X; in AtlasXomics Workflows, this is typically \
-                named 'combined.h5ad'.",
+        "rna_prepared_h5ad": LatchParameter(
+            display_name="Prepared RNA AnnData",
+            description="Prepared RNA h5ad from the preprocessing step, \
+                typically named 'rna_prepared.h5ad'.",
             batch_table_column=True,
         ),
-        "wt_anndata": LatchParameter(
-            display_name="Transcriptome AnnData",
-            description="H5AD file containing an AnnData object with gene \
-                expression data as .X.",
+        "ge_prepared_h5ad": LatchParameter(
+            display_name="Prepared gene accessibility AnnData",
+            description="Prepared gene accessibility h5ad from the \
+                preprocessing step, typically named 'ge_prepared.h5ad'.",
             batch_table_column=True,
         ),
-        "ge_anndata": LatchParameter(
-            display_name="Gene Accessibility AnnData",
-            description="H5AD file containing an AnnData object with gene \
-                accessibility data as .X; in AtlasXomics Workflows, this is \
-                typically named 'combined_ge.h5ad'.",
+        "atac_tiles_prepared_h5ad": LatchParameter(
+            display_name="Prepared ATAC tile AnnData",
+            description="Prepared ATAC tile h5ad from the preprocessing step, \
+                typically named 'atac_tiles_prepared.h5ad'.",
             batch_table_column=True,
         ),
         "n_neighbors": LatchParameter(
@@ -77,26 +72,6 @@ metadata = LatchMetadata(
                 score.",
             batch_table_column=True,
         ),
-        "min_umi_threshold": LatchParameter(
-            display_name="Correlation min mean UMI",
-            description="Minimum mean raw RNA UMI per gene required before \
-                computing RNA vs gene accessibility correlation.",
-            batch_table_column=True,
-        ),
-        "min_frac_expressing": LatchParameter(
-            display_name="Correlation min fraction expressing",
-            description="Minimum fraction of spots with nonzero raw RNA UMI \
-                for a gene before computing RNA vs gene accessibility \
-                correlation.",
-            batch_table_column=True,
-        ),
-        "genes_of_interest": LatchParameter(
-            display_name="Genes of interest",
-            description="Optional comma-separated gene symbols used for \
-                per-cluster RNA/ATAC GE summaries. If empty, the workflow uses \
-                the top correlated genes.",
-            batch_table_column=True,
-        ),
     },
     tags=[],
 )
@@ -105,50 +80,22 @@ metadata = LatchMetadata(
 @workflow(metadata)
 def glue_wf(
     project_name: str,
-    atac_anndata: LatchFile,
-    wt_anndata: LatchFile,
-    ge_anndata: LatchFile,
+    rna_prepared_h5ad: LatchFile,
+    ge_prepared_h5ad: LatchFile,
+    atac_tiles_prepared_h5ad: LatchFile,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
     resolutions: str = DEFAULT_RESOLUTIONS,
     chosen_resolution: float = 0.0,
-    min_umi_threshold: float = 0.5,
-    min_frac_expressing: float = 0.05,
-    genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
 
-    prepared = glue_preprocess_task(
+    return glue_train_task(
         project_name=project_name,
-        atac_anndata=atac_anndata,
-        wt_anndata=wt_anndata,
-        ge_anndata=ge_anndata,
-    )
-
-    results = glue_train_task(
-        project_name=project_name,
-        prepared_dir=prepared,
+        rna_prepared_h5ad=rna_prepared_h5ad,
+        ge_prepared_h5ad=ge_prepared_h5ad,
+        atac_tiles_prepared_h5ad=atac_tiles_prepared_h5ad,
         n_neighbors=n_neighbors,
         min_cluster_size=min_cluster_size,
         resolutions=resolutions,
         chosen_resolution=chosen_resolution,
-    )
-
-    results = corr_task(
-        project_name=project_name,
-        results_dir=results,
-        ge_anndata=ge_anndata,
-        min_umi_threshold=min_umi_threshold,
-        min_frac_expressing=min_frac_expressing,
-        genes_of_interest=genes_of_interest,
-    )
-
-    return results
-
-
-if __name__ == "__main__":
-    from latch.types import LatchDir
-    corr_task(
-        project_name="D01887_develop",
-        results_dir=LatchDir("latch://13502.account/glue_outs/D01887_00000802"),
-        ge_anndata=LatchFile("latch://13502.account/snap_outs/Co_pro_D01887_ATAC/combined_ge.h5ad")
     )
