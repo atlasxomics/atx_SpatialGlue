@@ -10,7 +10,9 @@ from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
 from wf.task import (
     DEFAULT_RESOLUTIONS,
+    coverage_task,
     corr_task,
+    finalize_task,
     glue_preprocess_task,
     glue_train_task,
 )
@@ -97,6 +99,18 @@ metadata = LatchMetadata(
                 the top correlated genes.",
             batch_table_column=True,
         ),
+        "compute_cluster_markers": LatchParameter(
+            display_name="Compute cluster marker genes",
+            description="Rank differential marker genes for SpatialGlue \
+                clusters and write marker tables plus a heatmap.",
+            batch_table_column=True,
+        ),
+        "marker_top_n": LatchParameter(
+            display_name="Marker genes per cluster",
+            description="Number of top marker genes per cluster to include in \
+                marker summary tables and the cluster marker heatmap.",
+            batch_table_column=True,
+        ),
     },
     tags=[],
 )
@@ -115,6 +129,8 @@ def glue_wf(
     min_umi_threshold: float = 0.5,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
+    compute_cluster_markers: bool = True,
+    marker_top_n: int = 50,
 ) -> LatchDir:
 
     prepared = glue_preprocess_task(
@@ -131,9 +147,16 @@ def glue_wf(
         min_cluster_size=min_cluster_size,
         resolutions=resolutions,
         chosen_resolution=chosen_resolution,
+        compute_cluster_markers=compute_cluster_markers,
+        marker_top_n=marker_top_n,
     )
 
-    results = corr_task(
+    coverage_results = coverage_task(
+        project_name=project_name,
+        results_dir=results,
+    )
+
+    corr_results = corr_task(
         project_name=project_name,
         results_dir=results,
         ge_anndata=ge_anndata,
@@ -142,7 +165,10 @@ def glue_wf(
         genes_of_interest=genes_of_interest,
     )
 
-    return results
+    return finalize_task(
+        results_dir=corr_results,
+        coverage_dir=coverage_results,
+    )
 
 
 if __name__ == "__main__":

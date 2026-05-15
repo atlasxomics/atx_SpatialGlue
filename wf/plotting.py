@@ -1,14 +1,19 @@
 import math
+from typing import Dict, List
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from matplotlib import gridspec
+from scipy import sparse as sp
+from scipy.cluster.hierarchy import dendrogram, linkage, leaves_list
+from scipy.spatial.distance import pdist
 
 
 def plot_corr_volcano_broken(
     corr,
-    outpath="corr_volcano.pdf",
+    outpath="corr_volcano.png",
     gene_col="gene",
     r_col="spearman_rho",
     q_col="qval_bh",
@@ -191,7 +196,7 @@ def plot_top_genes_bar(
     corr: pd.DataFrame,
     n: int = 20,
     fdr_thresh: float = 0.05,
-    outpath="top_genes_bar.pdf",
+    outpath="top_genes_bar.png",
     r_col="spearman_rho",
     gene_col="gene",
     fdr_col="qval_bh",
@@ -248,3 +253,144 @@ def plot_top_genes_bar(
     plt.tight_layout()
     plt.savefig(outpath, bbox_inches="tight")
     plt.close()
+
+
+def plot_marker_heatmap(
+    adata,
+    top_genes_per_cluster: Dict[str, List[str]],
+    output_path: str,
+    groupby: str = "cluster",
+    marker_top_n: int = 50,
+) -> pd.DataFrame:
+    """Plot mean marker expression by cluster as a z-scored heatmap."""
+
+    clusters = list(top_genes_per_cluster.keys())
+    seen = set()
+    all_top_genes: List[str] = []
+    for cluster in clusters:
+        for gene in top_genes_per_cluster[cluster]:
+            if gene not in seen:
+                all_top_genes.append(gene)
+                seen.add(gene)
+
+    if len(clusters) == 0 or len(all_top_genes) == 0:
+        raise ValueError("No marker genes available for heatmap.")
+
+    gene_idx = adata.var_names.get_indexer(all_top_genes)
+    valid = gene_idx >= 0
+    ordered_input_genes = [
+        gene for gene, keep in zip(all_top_genes, valid) if keep
+    ]
+    gene_idx = gene_idx[valid]
+    if len(ordered_input_genes) == 0:
+        raise ValueError("None of the marker genes were present in AnnData.")
+
+    X = adata.X
+    mean_expr = pd.DataFrame(
+        index=clusters,
+        columns=ordered_input_genes,
+        dtype=float,
+    )
+    for cluster in clusters:
+        mask = adata.obs[groupby].astype(str) == cluster
+        sub = X[mask.to_numpy(), :][:, gene_idx]
+        if sp.issparse(sub):
+            sub = sub.toarray()
+        mean_expr.loc[cluster] = np.asarray(sub).mean(axis=0)
+
+    if len(clusters) > 1:
+        values = mean_expr.to_numpy(dtype=float)
+        scaled = (values - values.mean(axis=0)) / (values.std(axis=0) + 1e-9)
+        Z = linkage(pdist(scaled, metric="euclidean"), method="ward")
+        cluster_order = [clusters[i] for i in leaves_list(Z)]
+    else:
+        Z = None
+        cluster_order = clusters
+
+    ordered_gene_set = set(ordered_input_genes)
+    seen_ordered = set()
+    ordered_genes: List[str] = []
+    for cluster in cluster_order:
+        for gene in top_genes_per_cluster[cluster]:
+            if gene in ordered_gene_set and gene not in seen_ordered:
+                ordered_genes.append(gene)
+                seen_ordered.add(gene)
+
+    heatmap_data = mean_expr.loc[cluster_order, ordered_genes].astype(float)
+    heatmap_zscore = heatmap_data.apply(
+        lambda col: (col - col.mean()) / (col.std() + 1e-9),
+        axis=0,
+    ).clip(-3, 3)
+
+    n_clusters = len(cluster_order)
+    n_genes = len(ordered_genes)
+    label_every_n = 5
+    gene_labels = [
+        gene if i % label_every_n == 0 else ""
+        for i, gene in enumerate(ordered_genes)
+    ]
+
+    fig_w = max(14, n_genes * 0.07)
+    fig_h = max(8, n_clusters * 0.50)
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    if Z is not None:
+        gs = gridspec.GridSpec(1, 2, width_ratios=[0.03, 0.97], wspace=0.008)
+        ax_dend = fig.add_subplot(gs[0])
+        ax_heat = fig.add_subplot(gs[1])
+        dendrogram(
+            Z,
+            orientation="left",
+            ax=ax_dend,
+            no_labels=True,
+            link_color_func=lambda _: "#444444",
+        )
+        ax_dend.set_axis_off()
+    else:
+        ax_heat = fig.add_subplot(111)
+
+    im = ax_heat.imshow(
+        heatmap_zscore.values,
+        aspect="auto",
+        cmap="RdYlBu_r",
+        vmin=-3,
+        vmax=3,
+        interpolation="nearest",
+    )
+    ax_heat.set_yticks(range(n_clusters))
+    ax_heat.set_yticklabels(cluster_order, fontsize=10)
+    ax_heat.yaxis.set_tick_params(length=0)
+    ax_heat.set_ylabel("Cluster", fontsize=11)
+
+    ax_heat.set_xticks(range(n_genes))
+    ax_heat.set_xticklabels(gene_labels, rotation=90, fontsize=6.5, ha="center")
+    ax_heat.xaxis.set_tick_params(length=0)
+
+    pos = 0
+    for cluster in cluster_order:
+        pos += len([
+            gene for gene in top_genes_per_cluster[cluster]
+            if gene in seen_ordered
+        ])
+        if pos < n_genes:
+            ax_heat.axvline(
+                x=pos - 0.5,
+                color="white",
+                linewidth=0.8,
+                alpha=0.8,
+            )
+
+    cbar = fig.colorbar(im, ax=ax_heat, shrink=0.4, pad=0.01, aspect=25)
+    cbar.set_label("Z-score", fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+    ax_heat.set_title(
+        f"Top {marker_top_n} DEGs per Cluster (Wilcoxon, ordered by similarity)",
+        fontsize=11,
+        fontweight="bold",
+        pad=10,
+    )
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return heatmap_zscore

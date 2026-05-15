@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import pickle
 import random
+import re
 import subprocess
 import sys
 from typing import Optional
@@ -14,7 +15,6 @@ import scanpy as sc
 import snapatac2 as snap
 import torch
 
-from matplotlib.backends.backend_pdf import PdfPages
 from scipy import sparse
 from sklearn.decomposition import TruncatedSVD
 from sklearn.neighbors import kneighbors_graph
@@ -42,6 +42,45 @@ logging.basicConfig(
 DEFAULT_RESOLUTIONS = "0.1,0.2,0.3,0.4,0.6,0.8,1.0,1.2"
 N_COMPONENTS = 50
 SEED = 42
+
+
+def _figures_dir(out_dir: str) -> str:
+    path = os.path.join(out_dir, "figures")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _tables_dir(out_dir: str) -> str:
+    path = os.path.join(out_dir, "tables")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _fig_path(out_dir: str, filename: str) -> str:
+    stem, ext = os.path.splitext(filename)
+    if ext.lower() == ".pdf":
+        filename = f"{stem}.png"
+    return os.path.join(_figures_dir(out_dir), filename)
+
+
+def _table_path(out_dir: str, filename: str) -> str:
+    return os.path.join(_tables_dir(out_dir), filename)
+
+
+def _safe_name(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
+    return safe or "labels"
+
+
+def _save_fig(fig, out_dir: str, filename: str) -> None:
+    fig.savefig(_fig_path(out_dir, filename), dpi=200, bbox_inches="tight")
+
+
+def _save_fig_page(fig, out_dir: str, filename: str, page_idx: int) -> None:
+    base = _fig_path(out_dir, filename)
+    stem, ext = os.path.splitext(base)
+    ext = ext or ".png"
+    fig.savefig(f"{stem}_{page_idx:03d}{ext}", dpi=200, bbox_inches="tight")
 
 
 def _parse_resolutions(resolutions: str) -> list[float]:
@@ -322,57 +361,59 @@ def _write_spatial_expression_reports(
         return
 
     for modality, matrix, adata, fname, cmap in [
-        ("RNA", X_rna, rna, "rna_spatial_expression.pdf", "Spectral_r"),
-        ("ATAC GE", X_ge, ge, "atac_ge_spatial_expression.pdf", "Spectral_r"),
+        ("RNA", X_rna, rna, "rna_spatial_expression.png", "Spectral_r"),
+        ("ATAC GE", X_ge, ge, "atac_ge_spatial_expression.png", "Spectral_r"),
     ]:
-        with PdfPages(os.path.join(out_dir, fname)) as pdf:
-            for sample in sorted(set(samples)):
-                mask = samples == sample
-                ncols = min(3, len(selected))
-                nrows = int(np.ceil(len(selected) / ncols))
-                fig, axes = plt.subplots(
-                    nrows,
-                    ncols,
-                    figsize=(4 * ncols, 4 * nrows),
-                    squeeze=False,
-                )
-                axes = axes.ravel()
-                for i, gene in enumerate(selected):
-                    idx = gene_to_idx[gene]
-                    _scatter_spatial(
-                        axes[i],
-                        adata.obsm["spatial"][mask],
-                        matrix[mask, idx],
-                        f"{sample} {modality}: {gene}",
-                        cmap=cmap,
-                    )
-                for ax in axes[len(selected):]:
-                    ax.axis("off")
-                fig.tight_layout()
-                pdf.savefig(fig, bbox_inches="tight")
-                plt.close(fig)
-
-    with PdfPages(os.path.join(out_dir, "rna_vs_atac_ge_spatial_expression.pdf")) as pdf:
-        for sample in sorted(set(samples)):
+        for page_idx, sample in enumerate(sorted(set(samples)), start=1):
             mask = samples == sample
-            for gene in selected:
+            ncols = min(3, len(selected))
+            nrows = int(np.ceil(len(selected) / ncols))
+            fig, axes = plt.subplots(
+                nrows,
+                ncols,
+                figsize=(4 * ncols, 4 * nrows),
+                squeeze=False,
+            )
+            axes = axes.ravel()
+            for i, gene in enumerate(selected):
                 idx = gene_to_idx[gene]
-                fig, axes = plt.subplots(1, 2, figsize=(8, 4))
                 _scatter_spatial(
-                    axes[0],
-                    rna.obsm["spatial"][mask],
-                    X_rna[mask, idx],
-                    f"{sample} RNA: {gene}",
+                    axes[i],
+                    adata.obsm["spatial"][mask],
+                    matrix[mask, idx],
+                    f"{sample} {modality}: {gene}",
+                    cmap=cmap,
                 )
-                _scatter_spatial(
-                    axes[1],
-                    ge.obsm["spatial"][mask],
-                    X_ge[mask, idx],
-                    f"{sample} ATAC GE: {gene}",
-                )
-                fig.tight_layout()
-                pdf.savefig(fig, bbox_inches="tight")
-                plt.close(fig)
+            for ax in axes[len(selected):]:
+                ax.axis("off")
+            fig.tight_layout()
+            _save_fig_page(fig, out_dir, fname, page_idx)
+            plt.close(fig)
+
+    page_idx = 1
+    for sample in sorted(set(samples)):
+        mask = samples == sample
+        for gene in selected:
+            idx = gene_to_idx[gene]
+            fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+            _scatter_spatial(
+                axes[0],
+                rna.obsm["spatial"][mask],
+                X_rna[mask, idx],
+                f"{sample} RNA: {gene}",
+            )
+            _scatter_spatial(
+                axes[1],
+                ge.obsm["spatial"][mask],
+                X_ge[mask, idx],
+                f"{sample} ATAC GE: {gene}",
+            )
+            fig.tight_layout()
+            _save_fig_page(
+                fig, out_dir, "rna_vs_atac_ge_spatial_expression.png", page_idx
+            )
+            page_idx += 1
+            plt.close(fig)
 
 
 def _write_spatial_cluster_reports(out_dir: str, rna, ge) -> None:
@@ -392,27 +433,26 @@ def _write_spatial_cluster_reports(out_dir: str, rna, ge) -> None:
     ge.obsm["spatial"] = rna.obsm["spatial"].copy()
     ge.obs[cluster_key] = rna.obs[cluster_key].values
 
-    with PdfPages(os.path.join(out_dir, "spatial_cluster_maps.pdf")) as pdf:
-        for sample in sorted(set(samples)):
-            mask = samples == sample
-            fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-            _scatter_spatial(
-                axes[0],
-                rna.obsm["spatial"][mask],
-                rna.obs[cluster_key].astype(str).values[mask],
-                f"{sample} RNA clusters",
-                categorical=True,
-            )
-            _scatter_spatial(
-                axes[1],
-                ge.obsm["spatial"][mask],
-                ge.obs[cluster_key].astype(str).values[mask],
-                f"{sample} ATAC GE clusters",
-                categorical=True,
-            )
-            fig.tight_layout()
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
+    for page_idx, sample in enumerate(sorted(set(samples)), start=1):
+        mask = samples == sample
+        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        _scatter_spatial(
+            axes[0],
+            rna.obsm["spatial"][mask],
+            rna.obs[cluster_key].astype(str).values[mask],
+            f"{sample} RNA clusters",
+            categorical=True,
+        )
+        _scatter_spatial(
+            axes[1],
+            ge.obsm["spatial"][mask],
+            ge.obs[cluster_key].astype(str).values[mask],
+            f"{sample} ATAC GE clusters",
+            categorical=True,
+        )
+        fig.tight_layout()
+        _save_fig_page(fig, out_dir, "spatial_cluster_maps.png", page_idx)
+        plt.close(fig)
 
 
 def _write_attention_reports(out_dir: str, adata) -> None:
@@ -427,35 +467,34 @@ def _write_attention_reports(out_dir: str, adata) -> None:
     adata.obs["alpha_ATAC_mean"] = np.asarray(adata.obsm["alpha_omics2"]).mean(axis=1)
     samples = _sample_labels(adata)
 
-    with PdfPages(os.path.join(out_dir, "spatialglue_attention_maps.pdf")) as pdf:
-        for sample in sorted(set(samples)):
-            mask = samples == sample
-            fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-            _scatter_spatial(
-                axes[0],
-                adata.obsm["spatial"][mask],
-                adata.obs["alpha_RNA_mean"].values[mask],
-                f"{sample} RNA attention",
-                cmap="Blues",
-            )
-            _scatter_spatial(
-                axes[1],
-                adata.obsm["spatial"][mask],
-                adata.obs["alpha_ATAC_mean"].values[mask],
-                f"{sample} ATAC attention",
-                cmap="Reds",
-            )
-            cluster_key = "sg_leiden_merged" if "sg_leiden_merged" in adata.obs else "sg_leiden"
-            _scatter_spatial(
-                axes[2],
-                adata.obsm["spatial"][mask],
-                adata.obs[cluster_key].astype(str).values[mask],
-                f"{sample} SpatialGlue clusters",
-                categorical=True,
-            )
-            fig.tight_layout()
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
+    for page_idx, sample in enumerate(sorted(set(samples)), start=1):
+        mask = samples == sample
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        _scatter_spatial(
+            axes[0],
+            adata.obsm["spatial"][mask],
+            adata.obs["alpha_RNA_mean"].values[mask],
+            f"{sample} RNA attention",
+            cmap="Blues",
+        )
+        _scatter_spatial(
+            axes[1],
+            adata.obsm["spatial"][mask],
+            adata.obs["alpha_ATAC_mean"].values[mask],
+            f"{sample} ATAC attention",
+            cmap="Reds",
+        )
+        cluster_key = "sg_leiden_merged" if "sg_leiden_merged" in adata.obs else "sg_leiden"
+        _scatter_spatial(
+            axes[2],
+            adata.obsm["spatial"][mask],
+            adata.obs[cluster_key].astype(str).values[mask],
+            f"{sample} SpatialGlue clusters",
+            categorical=True,
+        )
+        fig.tight_layout()
+        _save_fig_page(fig, out_dir, "spatialglue_attention_maps.png", page_idx)
+        plt.close(fig)
 
 
 def _write_umi_reports(
@@ -503,25 +542,24 @@ def _write_umi_reports(
             })
 
     umi = pd.DataFrame(rows)
-    umi_path = os.path.join(out_dir, "umi_per_cluster_genes_of_interest.csv")
+    umi_path = _table_path(out_dir, "umi_per_cluster_genes_of_interest.csv")
     umi.to_csv(umi_path, index=False)
     logging.info(f"Saved per-cluster UMI table: {umi_path}")
 
     plot_genes = selected[:12]
-    with PdfPages(os.path.join(out_dir, "umi_violin_per_cluster.pdf")) as pdf:
-        for gene in plot_genes:
-            idx = gene_to_idx[gene]
-            fig, ax = plt.subplots(figsize=(max(5, 0.6 * len(clusters)), 4))
-            data = [X_expr[labels == cluster, idx] for cluster in clusters]
-            ax.violinplot(data, showmeans=True, showextrema=False)
-            ax.set_xticks(np.arange(1, len(clusters) + 1))
-            ax.set_xticklabels(clusters, rotation=45)
-            ax.set_xlabel("Cluster")
-            ax.set_ylabel("Expression")
-            ax.set_title(f"{gene} expression by cluster")
-            fig.tight_layout()
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
+    for page_idx, gene in enumerate(plot_genes, start=1):
+        idx = gene_to_idx[gene]
+        fig, ax = plt.subplots(figsize=(max(5, 0.6 * len(clusters)), 4))
+        data = [X_expr[labels == cluster, idx] for cluster in clusters]
+        ax.violinplot(data, showmeans=True, showextrema=False)
+        ax.set_xticks(np.arange(1, len(clusters) + 1))
+        ax.set_xticklabels(clusters, rotation=45)
+        ax.set_xlabel("Cluster")
+        ax.set_ylabel("Expression")
+        ax.set_title(f"{gene} expression by cluster")
+        fig.tight_layout()
+        _save_fig_page(fig, out_dir, "umi_violin_per_cluster.png", page_idx)
+        plt.close(fig)
 
     mean_pivot = umi.pivot_table(
         index="cluster", columns="gene", values="mean_umi_per_spot"
@@ -539,7 +577,7 @@ def _write_umi_reports(
     ax.set_title("Mean raw UMI per spot")
     fig.colorbar(im, ax=ax, label="mean UMI")
     fig.tight_layout()
-    dot_path = os.path.join(out_dir, "umi_dotplot_per_cluster.pdf")
+    dot_path = _fig_path(out_dir, "umi_dotplot_per_cluster.png")
     fig.savefig(dot_path, bbox_inches="tight")
     plt.close(fig)
 
@@ -639,7 +677,7 @@ def _write_cluster_correlation_outputs(
             })
 
     per_cluster = pd.DataFrame(rows)
-    per_cluster_path = os.path.join(out_dir, "per_cluster_rna_atac_ge.csv")
+    per_cluster_path = _table_path(out_dir, "per_cluster_rna_atac_ge.csv")
     per_cluster.to_csv(per_cluster_path, index=False)
     logging.info(f"Saved per-cluster RNA/ATAC GE table: {per_cluster_path}")
 
@@ -662,7 +700,7 @@ def _write_cluster_correlation_outputs(
     axes[0, 0].set_ylabel("Mean")
     axes[1, 0].set_ylabel("Mean")
     fig.tight_layout()
-    bar_path = os.path.join(out_dir, "per_cluster_rna_atac_ge.pdf")
+    bar_path = _fig_path(out_dir, "per_cluster_rna_atac_ge.png")
     fig.savefig(bar_path, bbox_inches="tight")
     plt.close(fig)
 
@@ -698,9 +736,256 @@ def _write_cluster_correlation_outputs(
     ax.set_title("Scaled RNA expression by SpatialGlue cluster")
     fig.colorbar(im, ax=ax, label="scaled mean")
     fig.tight_layout()
-    heatmap_path = os.path.join(out_dir, "cluster_gene_heatmap.pdf")
+    heatmap_path = _fig_path(out_dir, "cluster_gene_heatmap.png")
     fig.savefig(heatmap_path, bbox_inches="tight")
     plt.close(fig)
+
+
+def _marker_expression_matrix(adata, modality_name: str):
+    for layer in ["log1p", "lognorm", "normalized"]:
+        if layer in adata.layers:
+            logging.info(
+                f"Using {modality_name} layer '{layer}' for cluster marker genes."
+            )
+            return layer, adata.layers[layer]
+
+    logging.warning(
+        f"{modality_name} log-normalized layers not found; "
+        f"using {modality_name} .X for cluster marker genes."
+    )
+    return "X", adata.X
+
+
+def _write_cluster_marker_outputs(
+    adata,
+    out_dir: str,
+    cluster_key: str = "sg_leiden_merged",
+    marker_top_n: int = 50,
+    modality_name: str = "RNA",
+    output_prefix: str = "",
+) -> None:
+    if marker_top_n < 1:
+        raise ValueError("marker_top_n must be at least 1.")
+    if cluster_key not in adata.obs.columns:
+        logging.warning(
+            f"Skipping cluster marker genes because obs['{cluster_key}'] is missing."
+        )
+        return
+
+    labels = adata.obs[cluster_key].astype(str)
+    n_clusters = int(labels.nunique())
+    if n_clusters < 2:
+        logging.warning(
+            "Skipping cluster marker genes because only %d cluster is present.",
+            n_clusters,
+        )
+        return
+
+    genes = pd.Index(adata.var_names).astype(str)
+    genes_upper = genes.str.upper()
+    keep_genes = ~(
+        genes_upper.str.startswith("MT-")
+        | genes_upper.str.startswith("RPS")
+        | genes_upper.str.startswith("RPL")
+        | genes_upper.str.startswith("MTRNR")
+    )
+    keep_genes = np.asarray(keep_genes, dtype=bool)
+    if int(keep_genes.sum()) == 0:
+        logging.warning("Skipping cluster marker genes because no genes remain.")
+        return
+
+    expression_layer, X = _marker_expression_matrix(adata, modality_name)
+    marker_adata = adata[:, keep_genes].copy()
+    marker_adata.X = X[:, keep_genes].copy()
+    marker_adata.obs["cluster"] = labels.loc[marker_adata.obs_names].values
+    marker_adata.obs["cluster"] = marker_adata.obs["cluster"].astype(str)
+
+    clusters = sorted(marker_adata.obs["cluster"].unique(), key=_cluster_sort_key)
+    logging.info(
+        "Ranking %s marker genes for %d clusters across %d genes.",
+        modality_name,
+        len(clusters),
+        marker_adata.n_vars,
+    )
+    sc.tl.rank_genes_groups(
+        marker_adata,
+        groupby="cluster",
+        method="wilcoxon",
+        use_raw=False,
+        pts=True,
+        key_added="cluster_markers",
+    )
+
+    deg_frames = []
+    top_frames = []
+    top_genes_per_cluster: dict[str, list[str]] = {}
+    for cluster in clusters:
+        deg_df = sc.get.rank_genes_groups_df(
+            marker_adata,
+            group=cluster,
+            key="cluster_markers",
+            pval_cutoff=0.05,
+            log2fc_min=0.25,
+        )
+        deg_df.insert(0, "cluster", cluster)
+        deg_frames.append(deg_df)
+
+        top_df = sc.get.rank_genes_groups_df(
+            marker_adata,
+            group=cluster,
+            key="cluster_markers",
+            pval_cutoff=0.05,
+        ).head(marker_top_n)
+        top_df.insert(0, "cluster", cluster)
+        top_frames.append(top_df)
+        top_genes_per_cluster[cluster] = top_df["names"].astype(str).tolist()
+
+    markers_df = pd.concat(deg_frames, ignore_index=True)
+    top_markers_df = pd.concat(top_frames, ignore_index=True)
+    prefix = output_prefix
+    markers_path = _table_path(out_dir, f"{prefix}deg_clusters.csv")
+    top_markers_path = _table_path(
+        out_dir, f"{prefix}deg_clusters_top{marker_top_n}.csv"
+    )
+    markers_df.to_csv(markers_path, index=False)
+    top_markers_df.to_csv(top_markers_path, index=False)
+    logging.info(f"Saved cluster marker genes: {markers_path}")
+    logging.info(f"Saved top cluster marker genes: {top_markers_path}")
+
+    adata.uns["stagate_cluster_marker_degs"] = markers_df
+    adata.uns["stagate_cluster_marker_degs_params"] = {
+        "cluster_source": "stagate",
+        "cluster_key": cluster_key,
+        "modality": modality_name,
+        "groupby": cluster_key,
+        "method": "wilcoxon",
+        "expression_layer": expression_layer,
+        "pval_cutoff": 0.05,
+        "log2fc_min": 0.25,
+        "excluded_prefixes": ["MT-", "RPS", "RPL", "MTRNR"],
+        "included_gene_count": int(keep_genes.sum()),
+        "excluded_gene_count": int((~keep_genes).sum()),
+    }
+
+    if top_markers_df.empty:
+        logging.warning("No significant marker genes found; skipping marker heatmap.")
+        return
+
+    heatmap_path = _fig_path(
+        out_dir, f"{prefix}cluster_marker_heatmap_top{marker_top_n}.png"
+    )
+    marker_heatmap = pl.plot_marker_heatmap(
+        marker_adata,
+        top_genes_per_cluster,
+        heatmap_path,
+        marker_top_n=marker_top_n,
+    )
+    heatmap_table = _table_path(
+        out_dir, f"{prefix}cluster_marker_heatmap_top{marker_top_n}.csv"
+    )
+    marker_heatmap.to_csv(heatmap_table)
+    adata.uns["stagate_cluster_marker_heatmap"] = marker_heatmap
+    adata.uns["stagate_cluster_marker_heatmap_params"] = {
+        "cluster_source": "stagate",
+        "cluster_key": cluster_key,
+        "modality": modality_name,
+        "included_gene_count": int(keep_genes.sum()),
+        "excluded_gene_count": int((~keep_genes).sum()),
+        "excluded_prefixes": ["MT-", "RPS", "RPL", "MTRNR"],
+        "expression_layer": expression_layer,
+        "pval_cutoff": 0.05,
+        "log2fc_min": 0.25,
+        "marker_top_n": marker_top_n,
+        "values": "column-wise z-score of mean expression, clipped to [-3, 3]",
+    }
+    logging.info(f"Saved cluster marker heatmap: {heatmap_path}")
+
+
+def _candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list[str]:
+    exclude = exclude or set()
+    candidates = []
+    for col in adata.obs.columns:
+        if col in exclude:
+            continue
+        col_lower = str(col).lower()
+        if not any(token in col_lower for token in ["cluster", "leiden", "louvain"]):
+            continue
+        values = adata.obs[col]
+        n_unique = values.nunique(dropna=True)
+        if n_unique < 2 or n_unique >= adata.n_obs:
+            continue
+        candidates.append(col)
+    return candidates
+
+
+def _export_coverage_group(atac, groupby: str, out_dir: str, suffix: str) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    before = set(glob.glob("*.bw"))
+    snap.ex.export_coverage(
+        atac,
+        groupby=groupby,
+        suffix=suffix,
+        bin_size=10,
+        output_format="bigwig",
+    )
+    after = set(glob.glob("*.bw"))
+    new_bws = sorted(after - before)
+    if new_bws:
+        subprocess.run(["mv"] + new_bws + [out_dir], check=True)
+    else:
+        logging.warning(f"No bigWig files were created for {groupby}.")
+
+
+def _export_cluster_coverages(out_dir: str, atac, rna) -> None:
+    logging.info("Creating coverage tracks...")
+
+    glue_dir = os.path.join(out_dir, "glue_cluster_coverages")
+    _export_coverage_group(
+        atac,
+        groupby="sg_leiden_merged",
+        out_dir=glue_dir,
+        suffix="_cluster.bw",
+    )
+
+    reserved = {"sg_leiden", "sg_leiden_merged"}
+    rna_cluster_cols = _candidate_cluster_columns(rna, exclude=reserved)
+    if rna_cluster_cols:
+        rna_dir = os.path.join(out_dir, "rna_cluster_coverages")
+        for col in rna_cluster_cols:
+            safe_col = _safe_name(col)
+            groupby = f"rna_{safe_col}"
+            atac.obs[groupby] = pd.Categorical(
+                rna.obs.loc[atac.obs_names, col].astype(str).values
+            )
+            logging.info(f"Exporting RNA cluster coverage tracks for '{col}'.")
+            _export_coverage_group(
+                atac,
+                groupby=groupby,
+                out_dir=os.path.join(rna_dir, safe_col),
+                suffix=f"_{groupby}.bw",
+            )
+    else:
+        logging.info("No pre-existing RNA cluster columns found for coverage export.")
+
+    atac_cluster_cols = _candidate_cluster_columns(atac, exclude=reserved)
+    atac_cluster_cols = [
+        col for col in atac_cluster_cols if not str(col).startswith("rna_")
+    ]
+    if atac_cluster_cols:
+        atac_dir = os.path.join(out_dir, "atac_cluster_coverages")
+        for col in atac_cluster_cols:
+            safe_col = _safe_name(col)
+            logging.info(f"Exporting ATAC cluster coverage tracks for '{col}'.")
+            _export_coverage_group(
+                atac,
+                groupby=col,
+                out_dir=os.path.join(atac_dir, safe_col),
+                suffix=f"_{safe_col}.bw",
+            )
+    else:
+        logging.info("No pre-existing ATAC cluster columns found for coverage export.")
+
+    logging.info("Finished coverage track export.")
 
 
 @custom_task(cpu=4, memory=200, storage_gib=1000)
@@ -784,7 +1069,7 @@ def glue_preprocess_task(
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}/preprocess")
 
 
-@custom_task(cpu=32, memory=100, storage_gib=1000)
+@custom_task(cpu=64, memory=100, storage_gib=1000)
 def glue_train_task(
     project_name: str,
     prepared_dir: LatchDir,
@@ -792,12 +1077,15 @@ def glue_train_task(
     min_cluster_size: int = 200,
     resolutions: str = DEFAULT_RESOLUTIONS,
     chosen_resolution: float = 0.0,
+    compute_cluster_markers: bool = True,
+    marker_top_n: int = 50,
 ) -> LatchDir:
 
     # ------------------ Initialize ---------------------
     logging.info("Starting glue training task...")
-    out_dir = f"/root/{project_name}"
+    out_dir = f"/root/{project_name}_coverages"
     os.makedirs(out_dir, exist_ok=True)
+    figures_dir = _figures_dir(out_dir)
 
     random.seed(SEED)
     np.random.seed(SEED)
@@ -933,29 +1221,28 @@ def glue_train_task(
     adata.obs["sg_leiden"] = adata.obs[final_raw_key].astype("category")
     adata.obs["sg_leiden_merged"] = adata.obs[final_merged_key].astype("category")
 
-    sweep_path = os.path.join(out_dir, "spatialglue_cluster_sweep.csv")
+    sweep_path = _table_path(out_dir, "spatialglue_cluster_sweep.csv")
     pd.DataFrame(sweep_rows).to_csv(sweep_path, index=False)
     logging.info(f"Saved SpatialGlue cluster sweep: {sweep_path}")
 
     # -------------------- Plots (merged and raw) --------------------
     logging.info("Plotting figures...")
-    sc.pl.umap(adata, color=["sg_leiden_merged"], save="umap_merged.pdf")
+    sc.settings.figdir = figures_dir
+    sc.pl.umap(adata, color=["sg_leiden_merged"], save="umap_merged.png")
     sc.pl.embedding(
         adata,
         basis="spatial",
         color=["sg_leiden_merged"],
-        save="spatial_umap_merged.pdf"
+        save="spatial_umap_merged.png"
     )
 
-    sc.pl.umap(adata, color=["sg_leiden"], save="umap_unmerged.pdf")
+    sc.pl.umap(adata, color=["sg_leiden"], save="umap_unmerged.png")
     sc.pl.embedding(
         adata,
         basis="spatial",
         color=["sg_leiden"],
-        save="spatial_umap_unmerged.pdf"
+        save="spatial_umap_unmerged.png"
     )
-
-    # Export coverage for newly assigned clusters
 
     # -------------------- Save data --------------------
     # Copy new clustering results
@@ -971,23 +1258,27 @@ def glue_train_task(
             rna_result.obsm[key] = adata.obsm[key]
 
     _write_attention_reports(out_dir, rna_result)
-
-    logging.info("Creating coverages for new clusters...")
-    coverage_dir = f"{out_dir}/glue_cluster_coverages"
-    os.makedirs(coverage_dir, exist_ok=True)
-    snap.ex.export_coverage(
-        atac_tiles_matched,
-        groupby="sg_leiden_merged",
-        suffix="_cluster.bw",
-        bin_size=10,
-        output_format="bigwig",
-    )
-    bws = glob.glob("*.bw")
-    if bws:
-        subprocess.run(["mv"] + bws + [coverage_dir], check=True)
-    else:
-        logging.warning("No bigWig files were created by export_coverage.")
-    logging.info("Finished coverages for new clusters...")
+    if compute_cluster_markers:
+        marker_jobs = [
+            (rna_result, "RNA", ""),
+            (ge_result, "GE", "ge_"),
+        ]
+        for marker_adata, modality_name, output_prefix in marker_jobs:
+            try:
+                _write_cluster_marker_outputs(
+                    marker_adata,
+                    out_dir,
+                    cluster_key="sg_leiden_merged",
+                    marker_top_n=marker_top_n,
+                    modality_name=modality_name,
+                    output_prefix=output_prefix,
+                )
+            except Exception as e:
+                warning = (
+                    f"Skipping {modality_name} cluster marker genes after error: {e}"
+                )
+                logging.exception(warning)
+                message(typ="warning", data={"title": warning, "body": warning})
 
     logging.info("Writing data...")
     atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
@@ -997,9 +1288,42 @@ def glue_train_task(
     with open(f"{out_dir}/SpatialGlue_model.pickle", "wb") as f:
         pickle.dump(out, f)
 
-    subprocess.run([f"mv /root/figures/* {out_dir}"], shell=True)
+    legacy_figures = glob.glob("/root/figures/*")
+    if legacy_figures:
+        subprocess.run(["mv"] + legacy_figures + [figures_dir], check=False)
 
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
+
+
+@custom_task(cpu=8, memory=100, storage_gib=1000)
+def coverage_task(
+    project_name: str,
+    results_dir: LatchDir,
+) -> LatchDir:
+
+    out_dir = f"/root/{project_name}_coverages"
+    os.makedirs(out_dir, exist_ok=True)
+
+    logging.info("Downloading clustered RNA and ATAC AnnData for coverage export...")
+    rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
+    atac_path = LatchFile(f"{results_dir.remote_path}/atac_glue.h5ad").local_path
+
+    logging.info("Reading clustered AnnData objects...")
+    rna = sc.read_h5ad(rna_path)
+    atac = sc.read_h5ad(atac_path)
+
+    _export_cluster_coverages(out_dir, atac, rna)
+
+    return LatchDir(out_dir, f"{results_dir.remote_path}/coverages")
+
+
+@custom_task(cpu=1, memory=4, storage_gib=10)
+def finalize_task(
+    results_dir: LatchDir,
+    coverage_dir: LatchDir,
+) -> LatchDir:
+    logging.info(f"Coverage outputs written to: {coverage_dir.remote_path}")
+    return results_dir
 
 
 @custom_task(cpu=8, memory=200, storage_gib=1000)
@@ -1114,7 +1438,7 @@ def corr_task(
         .merge(filter_stats, on="gene", how="inner")
     )
 
-    res_path = os.path.join(out_dir, "atac-ge_vs_rna_spearman.csv")
+    res_path = _table_path(out_dir, "atac-ge_vs_rna_spearman.csv")
     if n_keep == 0:
         msg = (
             "No genes passed correlation filters: "
@@ -1147,12 +1471,12 @@ def corr_task(
             "pval",
             "qval_bh",
         ]).to_csv(
-            os.path.join(out_dir, "atac_rna_spearman_all_genes.csv"),
+            _table_path(out_dir, "atac_rna_spearman_all_genes.csv"),
             index=False,
         )
         logging.info(f"Saved empty Spearman results: {res_path}")
 
-        stats_path = os.path.join(out_dir, "gene_stats.csv")
+        stats_path = _table_path(out_dir, "gene_stats.csv")
         stats.to_csv(stats_path, index=False)
         logging.info(f"Saved: {stats_path} (RNA counts source: {rna_source})")
         report_genes = _selected_report_genes(genes_of_interest, genes)
@@ -1194,7 +1518,7 @@ def corr_task(
         "corr_mean_umi": "mean_umi",
         "corr_frac_expressing": "frac_expressing",
     })
-    notebook_corr_path = os.path.join(out_dir, "atac_rna_spearman_all_genes.csv")
+    notebook_corr_path = _table_path(out_dir, "atac_rna_spearman_all_genes.csv")
     notebook_corr[[
         "gene",
         "spearman_r",
@@ -1206,11 +1530,11 @@ def corr_task(
     ]].to_csv(notebook_corr_path, index=False)
     logging.info(f"Saved notebook-style Spearman table: {notebook_corr_path}")
 
-    stats_path = os.path.join(out_dir, "gene_stats.csv")
+    stats_path = _table_path(out_dir, "gene_stats.csv")
     stats.to_csv(stats_path, index=False)
     logging.info(f"Saved: {stats_path} (RNA counts source: {rna_source})")
 
-    overview_path = os.path.join(out_dir, "atac_rna_correlation_overview.pdf")
+    overview_path = _fig_path(out_dir, "atac_rna_correlation_overview.png")
     logging.info(f"Saving correlation overview to {overview_path}")
     _plot_correlation_overview(corr_with_filter, overview_path)
 
@@ -1244,11 +1568,11 @@ def corr_task(
         genes_of_interest=genes_of_interest,
     )
 
-    bar_path = os.path.join(out_dir, "top_genes_bar.pdf")
+    bar_path = _fig_path(out_dir, "top_genes_bar.png")
     logging.info(f"Saving top correlated genes figure to {bar_path}")
     pl.plot_top_genes_bar(res, n=20, fdr_thresh=0.05, outpath=bar_path)
 
-    volcano_path = os.path.join(out_dir, "corr_volcano.pdf")
+    volcano_path = _fig_path(out_dir, "corr_volcano.png")
     logging.info(f"Saving volcano to {volcano_path}")
     pl.plot_corr_volcano_broken(
         res,
