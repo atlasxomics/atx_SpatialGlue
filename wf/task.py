@@ -42,6 +42,8 @@ logging.basicConfig(
 DEFAULT_RESOLUTIONS = "0.1,0.2,0.3,0.4,0.6,0.8,1.0,1.2"
 N_COMPONENTS = 50
 SEED = 42
+SCANPY_CLUSTER_POINT_SIZE = 0.5
+SPATIAL_SCATTER_POINT_SIZE = 5.5
 
 
 def _figures_dir(out_dir: str) -> str:
@@ -310,7 +312,13 @@ def _scatter_spatial(ax, coords, values, title, cmap="Spectral_r", categorical=F
     if categorical:
         labels = pd.Categorical(values.astype(str))
         codes = labels.codes
-        scatter = ax.scatter(coords[:, 0], coords[:, 1], c=codes, s=6, cmap="tab20")
+        scatter = ax.scatter(
+            coords[:, 0],
+            coords[:, 1],
+            c=codes,
+            s=SPATIAL_SCATTER_POINT_SIZE,
+            cmap="tab20",
+        )
         handles = []
         for code, label in enumerate(labels.categories):
             handles.append(plt.Line2D(
@@ -324,7 +332,13 @@ def _scatter_spatial(ax, coords, values, title, cmap="Spectral_r", categorical=F
             ))
         ax.legend(handles=handles, title="cluster", fontsize=6, loc="best")
     else:
-        scatter = ax.scatter(coords[:, 0], coords[:, 1], c=values, s=6, cmap=cmap)
+        scatter = ax.scatter(
+            coords[:, 0],
+            coords[:, 1],
+            c=values,
+            s=SPATIAL_SCATTER_POINT_SIZE,
+            cmap=cmap,
+        )
         plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title(title, fontsize=9)
     ax.set_aspect("equal")
@@ -1225,23 +1239,21 @@ def glue_train_task(
     pd.DataFrame(sweep_rows).to_csv(sweep_path, index=False)
     logging.info(f"Saved SpatialGlue cluster sweep: {sweep_path}")
 
-    # -------------------- Plots (merged and raw) --------------------
+    # -------------------- Plots --------------------
     logging.info("Plotting figures...")
     sc.settings.figdir = figures_dir
-    sc.pl.umap(adata, color=["sg_leiden_merged"], save="umap_merged.png")
+    sc.pl.umap(
+        adata,
+        color=["sg_leiden_merged"],
+        size=SCANPY_CLUSTER_POINT_SIZE,
+        save=".png",
+    )
     sc.pl.embedding(
         adata,
         basis="spatial",
         color=["sg_leiden_merged"],
-        save="spatial_umap_merged.png"
-    )
-
-    sc.pl.umap(adata, color=["sg_leiden"], save="umap_unmerged.png")
-    sc.pl.embedding(
-        adata,
-        basis="spatial",
-        color=["sg_leiden"],
-        save="spatial_umap_unmerged.png"
+        size=SCANPY_CLUSTER_POINT_SIZE,
+        save=".png",
     )
 
     # -------------------- Save data --------------------
@@ -1260,7 +1272,7 @@ def glue_train_task(
     _write_attention_reports(out_dir, rna_result)
     if compute_cluster_markers:
         marker_jobs = [
-            (rna_result, "RNA", ""),
+            (rna_result, "RNA", "rna_"),
             (ge_result, "GE", "ge_"),
         ]
         for marker_adata, modality_name, output_prefix in marker_jobs:
