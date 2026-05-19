@@ -8,8 +8,8 @@ from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
 
+from wf.utils import DEFAULT_RESOLUTIONS
 from wf.task import (
-    DEFAULT_RESOLUTIONS,
     coverage_task,
     corr_task,
     finalize_task,
@@ -35,10 +35,11 @@ metadata = LatchMetadata(
             batch_table_column=True,
         ),
         "atac_anndata": LatchParameter(
-            display_name="Epigenomic AnnData",
-            description="H5AD file containing an AnnData object with a tile \
-                matrix as .X; in AtlasXomics Workflows, this is typically \
-                named 'combined.h5ad'.",
+            display_name="Epigenomic tile AnnData",
+            description="Optional H5AD file containing an AnnData object with \
+                an ATAC tile matrix as .X. If omitted, SpatialGlue runs with \
+                RNA and gene accessibility inputs and coverage tracks are \
+                skipped.",
             batch_table_column=True,
         ),
         "wt_anndata": LatchParameter(
@@ -119,9 +120,9 @@ metadata = LatchMetadata(
 @workflow(metadata)
 def glue_wf(
     project_name: str,
-    atac_anndata: LatchFile,
     wt_anndata: LatchFile,
     ge_anndata: LatchFile,
+    atac_anndata: Optional[LatchFile] = None,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
     resolutions: str = DEFAULT_RESOLUTIONS,
@@ -135,9 +136,9 @@ def glue_wf(
 
     prepared = glue_preprocess_task(
         project_name=project_name,
-        atac_anndata=atac_anndata,
         wt_anndata=wt_anndata,
         ge_anndata=ge_anndata,
+        atac_anndata=atac_anndata,
     )
 
     results = glue_train_task(

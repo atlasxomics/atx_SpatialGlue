@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 
 import numpy as np
@@ -8,6 +9,9 @@ import warnings
 from anndata import AnnData
 from scipy import sparse
 from scipy.spatial.distance import cdist
+from sklearn.decomposition import TruncatedSVD
+from sklearn.neighbors import kneighbors_graph
+from sklearn.preprocessing import StandardScaler
 from typing import Optional
 
 from latch.functions.messages import message
@@ -324,3 +328,269 @@ def merge_small_clusters(
 
 def to_dense(X):
     return X.toarray() if sparse.issparse(X) else X
+
+
+DEFAULT_RESOLUTIONS = "0.1,0.2,0.3,0.4,0.6,0.8,1.0,1.2"
+N_COMPONENTS = 50
+SEED = 42
+SCANPY_CLUSTER_POINT_SIZE = 0.5
+SPATIAL_SCATTER_POINT_SIZE = 5.5
+
+
+def figures_dir(out_dir: str) -> str:
+    path = os.path.join(out_dir, "figures")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def tables_dir(out_dir: str) -> str:
+    path = os.path.join(out_dir, "tables")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def fig_path(out_dir: str, filename: str) -> str:
+    stem, ext = os.path.splitext(filename)
+    if ext.lower() == ".pdf":
+        filename = f"{stem}.png"
+    return os.path.join(figures_dir(out_dir), filename)
+
+
+def table_path(out_dir: str, filename: str) -> str:
+    return os.path.join(tables_dir(out_dir), filename)
+
+
+def safe_name(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
+    return safe or "labels"
+
+
+def save_fig_page(fig, out_dir: str, filename: str, page_idx: int) -> None:
+    base = fig_path(out_dir, filename)
+    stem, ext = os.path.splitext(base)
+    ext = ext or ".png"
+    fig.savefig(f"{stem}_{page_idx:03d}{ext}", dpi=200, bbox_inches="tight")
+
+
+def as_bool(value) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+
+def parse_gene_list(genes: Optional[str]) -> list[str]:
+    if genes is None:
+        return []
+    return [g.strip() for g in genes.split(",") if g.strip()]
+
+
+def cluster_sort_key(label):
+    label = str(label)
+    return (0, int(label)) if label.isdigit() else (1, label)
+
+
+def parse_resolutions(resolutions: str) -> list[float]:
+    vals = []
+    for item in resolutions.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        vals.append(float(item))
+    if not vals:
+        raise ValueError("At least one clustering resolution is required.")
+    return vals
+
+
+def resolution_suffix(resolution: float) -> str:
+    return f"{resolution:g}".replace(".", "p")
+
+
+def morans_i(connectivities, labels) -> float:
+    """Compute Moran's I for numeric labels over a sparse connectivity graph."""
+    W = connectivities.astype(np.float64)
+    row_sums = np.asarray(W.sum(axis=1)).ravel()
+    row_sums[row_sums == 0] = 1.0
+    W = W.multiply(1.0 / row_sums[:, None])
+
+    x = np.asarray(labels, dtype=np.float64)
+    z = x - x.mean()
+    denom = float(z @ z)
+    if denom <= 1e-12:
+        return 0.0
+    return float((z @ W.dot(z)) / denom)
+
+
+def spatial_connectivities(adata, n_neighbors: int):
+    if "spatial" not in adata.obsm:
+        logging.warning(
+            "No adata.obsm['spatial'] found; using embedding neighbors for Moran's I."
+        )
+        return adata.obsp["connectivities"]
+
+    coords = np.asarray(adata.obsm["spatial"])
+    rows = []
+    cols = []
+    data = []
+
+    if "sample" in adata.obs.columns:
+        groups = adata.obs.groupby("sample", sort=False).indices.values()
+    else:
+        groups = [np.arange(adata.n_obs)]
+
+    for idx in groups:
+        idx = np.asarray(idx, dtype=int)
+        if len(idx) < 2:
+            continue
+        k = min(n_neighbors, len(idx) - 1)
+        graph = kneighbors_graph(
+            coords[idx],
+            n_neighbors=k,
+            mode="connectivity",
+            include_self=False,
+        ).tocoo()
+        rows.append(idx[graph.row])
+        cols.append(idx[graph.col])
+        data.append(graph.data)
+
+    if not rows:
+        logging.warning(
+            "Could not build spatial neighbor graph; using embedding neighbors "
+            "for Moran's I."
+        )
+        return adata.obsp["connectivities"]
+
+    conn = sparse.csr_matrix(
+        (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(adata.n_obs, adata.n_obs),
+    )
+    return conn.maximum(conn.T)
+
+
+def choose_n_components(n_obs: int, n_vars: int, requested: int) -> int:
+    n_components = min(requested, n_obs - 1, n_vars - 1)
+    if n_components < 1:
+        raise ValueError(
+            f"Cannot compute embedding with n_obs={n_obs}, n_vars={n_vars}."
+        )
+    return n_components
+
+
+def as_float32_csr(X):
+    """Convert AnnData matrix-like inputs to numeric CSR without dtype ambiguity."""
+    if sparse.issparse(X):
+        out = X.tocsr().astype(np.float32)
+    elif hasattr(X, "to_memory"):
+        X_mem = X.to_memory()
+        if sparse.issparse(X_mem):
+            out = X_mem.tocsr().astype(np.float32)
+        else:
+            out = sparse.csr_matrix(np.asarray(X_mem, dtype=np.float32))
+    else:
+        out = sparse.csr_matrix(np.asarray(X, dtype=np.float32))
+
+    if out.data.size:
+        out.data = np.nan_to_num(out.data, nan=0.0, posinf=0.0, neginf=0.0)
+    return out
+
+
+def compute_lsi(X, n_components: int = N_COMPONENTS, seed: int = SEED) -> np.ndarray:
+    """Compute TF-IDF + log1p + SVD LSI, dropping the first depth component."""
+    X_raw = as_float32_csr(X)
+    X_tfidf = X_raw.copy()
+
+    row_sums = np.asarray(X_tfidf.sum(axis=1)).ravel()
+    row_sums[row_sums == 0] = 1
+    X_tfidf = X_tfidf.multiply(1.0 / row_sums[:, None])
+
+    col_nnz = np.diff(X_raw.tocsc().indptr)
+    idf = np.log1p(X_raw.shape[0] / (col_nnz + 1))
+    X_tfidf = X_tfidf.multiply(idf)
+    X_tfidf = X_tfidf.multiply(1e4)
+    X_tfidf.data = np.log1p(X_tfidf.data)
+
+    n_svd = choose_n_components(
+        X_tfidf.shape[0], X_tfidf.shape[1], n_components + 1
+    )
+    if n_svd < 2:
+        raise ValueError("LSI requires at least two SVD components.")
+
+    lsi = TruncatedSVD(n_components=n_svd, random_state=seed).fit_transform(X_tfidf)
+    lsi = lsi[:, 1:]
+    lsi = (lsi - lsi.mean(axis=0)) / (lsi.std(axis=0) + 1e-9)
+    return lsi.astype(np.float32)
+
+
+def add_rna_features(rna, n_components: int = N_COMPONENTS) -> None:
+    if "feat" in rna.obsm:
+        logging.info("RNA feat already present; reusing it.")
+        return
+
+    if "highly_variable" in rna.var.columns:
+        hvgs = rna.var["highly_variable"].fillna(False).astype(bool).values
+        if hvgs.sum() == 0:
+            logging.warning("No highly_variable genes found; using all RNA genes.")
+            hvgs = np.ones(rna.n_vars, dtype=bool)
+    else:
+        logging.warning("RNA highly_variable column not found; using all RNA genes.")
+        hvgs = np.ones(rna.n_vars, dtype=bool)
+
+    rna_hvg = rna[:, hvgs].copy()
+    for layer in ["lognorm", "normalized", "log1p"]:
+        if layer in rna_hvg.layers:
+            logging.info(f"Using RNA layer '{layer}' for SpatialGlue features.")
+            X = rna_hvg.layers[layer]
+            break
+    else:
+        if "counts" in rna_hvg.layers:
+            from wf import correlation as corr
+
+            logging.info(
+                "RNA log-normalized layer not found; computing lognorm from counts."
+            )
+            X = corr.log_norm(to_dense(rna_hvg.layers["counts"]), scaleto=10000)
+        else:
+            logging.warning(
+                "RNA log-normalized/counts layers not found; using RNA .X."
+            )
+            X = rna_hvg.X
+
+    X = to_dense(X).astype(np.float32)
+    X_scaled = StandardScaler().fit_transform(X)
+    n_svd = choose_n_components(X_scaled.shape[0], X_scaled.shape[1], n_components)
+    rna.obsm["feat"] = TruncatedSVD(
+        n_components=n_svd, random_state=SEED
+    ).fit_transform(X_scaled).astype(np.float32)
+    logging.info(f"RNA SpatialGlue features: {rna.obsm['feat'].shape}")
+
+
+def align_modalities(rna, ge, atac=None):
+    common = rna.obs_names.intersection(ge.obs_names)
+    if atac is not None:
+        common = common.intersection(atac.obs_names)
+    if len(common) == 0:
+        if atac is None:
+            raise RuntimeError(
+                "Could not find common barcodes across transcriptome and gene "
+                "accessibility data."
+            )
+        raise RuntimeError(
+            "Could not find common barcodes across transcriptome, gene "
+            "accessibility, and ATAC tile data."
+        )
+
+    rna_matched = rna[common, :].copy()
+    ge_matched = ge[common, :].copy()
+    atac_matched = atac[common, :].copy() if atac is not None else None
+
+    ge_matched = ge_matched[
+        ge_matched.obs_names.get_indexer(rna_matched.obs_names), :
+    ].copy()
+    if atac_matched is not None:
+        atac_matched = atac_matched[
+            atac_matched.obs_names.get_indexer(rna_matched.obs_names), :
+        ].copy()
+
+    assert (rna_matched.obs_names == ge_matched.obs_names).all()
+    if atac_matched is not None:
+        assert (rna_matched.obs_names == atac_matched.obs_names).all()
+    return rna_matched, ge_matched, atac_matched
