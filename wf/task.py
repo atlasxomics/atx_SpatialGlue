@@ -116,6 +116,24 @@ def _choose_n_components(n_obs: int, n_vars: int, requested: int) -> int:
     return n_components
 
 
+def _as_float32_csr(X):
+    """Convert AnnData matrix-like inputs to numeric CSR without dtype ambiguity."""
+    if sparse.issparse(X):
+        out = X.tocsr().astype(np.float32)
+    elif hasattr(X, "to_memory"):
+        X_mem = X.to_memory()
+        if sparse.issparse(X_mem):
+            out = X_mem.tocsr().astype(np.float32)
+        else:
+            out = sparse.csr_matrix(np.asarray(X_mem, dtype=np.float32))
+    else:
+        out = sparse.csr_matrix(np.asarray(X, dtype=np.float32))
+
+    if out.data.size:
+        out.data = np.nan_to_num(out.data, nan=0.0, posinf=0.0, neginf=0.0)
+    return out
+
+
 def _morans_i(connectivities, labels) -> float:
     """Compute Moran's I for numeric labels over a sparse connectivity graph."""
     W = connectivities.astype(np.float64)
@@ -179,9 +197,7 @@ def _spatial_connectivities(adata, n_neighbors: int):
 
 def _compute_lsi(X, n_components: int = N_COMPONENTS, seed: int = SEED) -> np.ndarray:
     """Compute TF-IDF + log1p + SVD LSI, dropping the first depth component."""
-    if not sparse.issparse(X):
-        X = sparse.csr_matrix(X)
-    X_raw = X.copy().astype(np.float32)
+    X_raw = _as_float32_csr(X)
     X_tfidf = X_raw.copy()
 
     row_sums = np.asarray(X_tfidf.sum(axis=1)).ravel()
