@@ -23,6 +23,16 @@ def marker_expression_matrix(adata, modality_name: str):
     return "X", adata.X
 
 
+def ensure_scanpy_log1p_metadata(adata) -> None:
+    """Scanpy expects uns['log1p']['base'] when uns['log1p'] exists."""
+    if "log1p" not in adata.uns:
+        return
+    if not isinstance(adata.uns["log1p"], dict):
+        adata.uns["log1p"] = {"base": None}
+        return
+    adata.uns["log1p"].setdefault("base", None)
+
+
 def write_cluster_marker_outputs(
     adata,
     out_dir: str,
@@ -66,6 +76,7 @@ def write_cluster_marker_outputs(
     marker_adata.X = X[:, keep_genes].copy()
     marker_adata.obs["cluster"] = labels.loc[marker_adata.obs_names].values
     marker_adata.obs["cluster"] = marker_adata.obs["cluster"].astype(str)
+    ensure_scanpy_log1p_metadata(marker_adata)
 
     clusters = sorted(marker_adata.obs["cluster"].unique(), key=utils.cluster_sort_key)
     logging.info(
