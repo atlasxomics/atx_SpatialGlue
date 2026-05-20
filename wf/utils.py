@@ -330,11 +330,19 @@ def to_dense(X):
     return X.toarray() if sparse.issparse(X) else X
 
 
+def to_numpy_array(value):
+    if value is None:
+        return None
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
 DEFAULT_RESOLUTIONS = "0.1,0.2,0.3,0.4,0.6,0.8,1.0,1.2"
 N_COMPONENTS = 50
 SEED = 42
 SCANPY_CLUSTER_POINT_SIZE = 0.5
-SPATIAL_SCATTER_POINT_SIZE = 5.5
+SPATIAL_SCATTER_POINT_SIZE = 2.5
 
 
 def figures_dir(out_dir: str) -> str:
@@ -353,7 +361,9 @@ def fig_path(out_dir: str, filename: str) -> str:
     stem, ext = os.path.splitext(filename)
     if ext.lower() == ".pdf":
         filename = f"{stem}.png"
-    return os.path.join(figures_dir(out_dir), filename)
+    path = os.path.join(figures_dir(out_dir), filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
 
 def table_path(out_dir: str, filename: str) -> str:
@@ -370,6 +380,13 @@ def save_fig_page(fig, out_dir: str, filename: str, page_idx: int) -> None:
     stem, ext = os.path.splitext(base)
     ext = ext or ".png"
     fig.savefig(f"{stem}_{page_idx:03d}{ext}", dpi=200, bbox_inches="tight")
+
+
+def save_fig_suffix(fig, out_dir: str, filename: str, suffix: str) -> None:
+    base = fig_path(out_dir, filename)
+    stem, ext = os.path.splitext(base)
+    ext = ext or ".png"
+    fig.savefig(f"{stem}_{safe_name(suffix)}{ext}", dpi=200, bbox_inches="tight")
 
 
 def as_bool(value) -> bool:

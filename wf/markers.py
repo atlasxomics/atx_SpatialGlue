@@ -114,6 +114,18 @@ def write_cluster_marker_outputs(
             key="cluster_markers",
             pval_cutoff=0.05,
         ).head(marker_top_n)
+        if top_df.empty:
+            logging.warning(
+                "No significant %s marker genes for cluster %s; using top "
+                "ranked genes for heatmap.",
+                modality_name,
+                cluster,
+            )
+            top_df = sc.get.rank_genes_groups_df(
+                marker_adata,
+                group=cluster,
+                key="cluster_markers",
+            ).head(marker_top_n)
         top_df.insert(0, "cluster", cluster)
         top_frames.append(top_df)
         top_genes_per_cluster[cluster] = top_df["names"].astype(str).tolist()

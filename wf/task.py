@@ -139,6 +139,7 @@ def glue_train_task(
     chosen_resolution: float = 0.0,
     compute_cluster_markers: bool = True,
     marker_top_n: int = 50,
+    spatialglue_model_pickle: Optional[LatchFile] = None,
 ) -> LatchDir:
 
     # ------------------ Initialize ---------------------
@@ -185,26 +186,53 @@ def glue_train_task(
         f"ATAC tiles {atac_shape}"
     )
 
-    # -------------------- Train SpatialGlue --------------------
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # -------------------- Train or load SpatialGlue --------------------
+    if spatialglue_model_pickle is not None:
+        logging.info(
+            "Loading existing SpatialGlue_model.pickle; skipping SpatialGlue "
+            "neighbor-graph construction and training."
+        )
+        with open(spatialglue_model_pickle.local_path, "rb") as f:
+            out = pickle.load(f)
+        if not isinstance(out, dict) or "SpatialGlue" not in out:
+            raise ValueError(
+                "spatialglue_model_pickle must contain a dict with a "
+                "'SpatialGlue' embedding, as written by this workflow."
+            )
+        rna_result = rna_matched.copy()
+        ge_result = ge_matched.copy()
+    else:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    logging.info("construct_neighbor_graph...")
-    data = construct_neighbor_graph(
-        rna_matched, ge_matched, datatype="Spatial-epigenome-transcriptome"
-    )
+        logging.info("construct_neighbor_graph...")
+        data = construct_neighbor_graph(
+            rna_matched, ge_matched, datatype="Spatial-epigenome-transcriptome"
+        )
 
-    logging.info("Train_SpatialGlue...")
-    model = Train_SpatialGlue(
-        data,
-        datatype="Spatial-epigenome-transcriptome",
-        random_seed=utils.SEED,
-        device=device,
-    )
-    logging.info("training...")
-    out = model.train()
+        logging.info("Train_SpatialGlue...")
+        model = Train_SpatialGlue(
+            data,
+            datatype="Spatial-epigenome-transcriptome",
+            random_seed=utils.SEED,
+            device=device,
+        )
+        logging.info("training...")
+        out = model.train()
 
-    rna_result = data["adata_omics1"]
-    ge_result = data["adata_omics2"]
+        rna_result = data["adata_omics1"]
+        ge_result = data["adata_omics2"]
+
+    out["SpatialGlue"] = utils.to_numpy_array(out["SpatialGlue"])
+    for key in ["alpha", "alpha_omics1", "alpha_omics2"]:
+        if key in out and out.get(key) is not None:
+            out[key] = utils.to_numpy_array(out[key])
+    if out["SpatialGlue"].shape[0] != rna_result.n_obs:
+        raise ValueError(
+            "Loaded SpatialGlue embedding has "
+            f"{out['SpatialGlue'].shape[0]} rows, but prepared RNA has "
+            f"{rna_result.n_obs} observations. Use a pickle generated from "
+            "the same prepared inputs."
+        )
 
     # Collect embeddings/weights on an AnnData for downstream analysis
     logging.info("copy data...")
@@ -307,13 +335,6 @@ def glue_train_task(
         size=utils.SCANPY_CLUSTER_POINT_SIZE,
         save=".png",
     )
-    sc.pl.embedding(
-        adata,
-        basis="spatial",
-        color=["sg_leiden_merged"],
-        size=utils.SCANPY_CLUSTER_POINT_SIZE,
-        save=".png",
-    )
 
     # -------------------- Save data --------------------
     # Copy new clustering results
@@ -326,12 +347,19 @@ def glue_train_task(
             obj.obs_names, "sg_leiden_merged"
         ].values
 
-    rna_result.obsm["SpatialGlue"] = adata.obsm["SpatialGlue"]
+    for obj in [rna_result, ge_result]:
+        obj.obsm["SpatialGlue"] = adata.obsm["SpatialGlue"]
+        if "X_umap" in adata.obsm:
+            obj.obsm["X_umap"] = adata.obsm["X_umap"]
+        obj.uns["spatialglue_umap_params"] = {
+            "source_representation": "SpatialGlue",
+            "n_neighbors": int(n_neighbors),
+            "random_state": int(utils.SEED),
+        }
     for key in ["alpha", "alpha_omics1", "alpha_omics2"]:
         if key in adata.obsm and adata.obsm[key] is not None:
             rna_result.obsm[key] = adata.obsm[key]
 
-    pl.write_attention_reports(out_dir, rna_result)
     if compute_cluster_markers:
         marker_jobs = [
             (rna_result, "RNA", "rna_"),
@@ -423,7 +451,6 @@ def corr_task(
     project_name: str,
     results_dir: LatchDir,
     ge_anndata: LatchFile,
-    min_umi_threshold: float = 0.5,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
@@ -499,10 +526,7 @@ def corr_task(
     X_rna_counts_dense = utils.to_dense(X_rna_counts).astype(np.float32)
     mean_umi = X_rna_counts_dense.mean(axis=0)
     frac_expressing = (X_rna_counts_dense > 0).mean(axis=0)
-    keep = (
-        (mean_umi >= float(min_umi_threshold))
-        & (frac_expressing >= float(min_frac_expressing))
-    )
+    keep = frac_expressing >= float(min_frac_expressing)
     n_keep = int(keep.sum())
     rna_stats = gs.compute_gene_stats_matrix(
         X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
@@ -512,7 +536,6 @@ def corr_task(
         "corr_mean_umi": mean_umi,
         "corr_frac_expressing": frac_expressing,
         "passes_corr_filter": keep,
-        "corr_min_umi_threshold": float(min_umi_threshold),
         "corr_min_frac_expressing": float(min_frac_expressing),
     })
 
@@ -534,7 +557,6 @@ def corr_task(
     if n_keep == 0:
         msg = (
             "No genes passed correlation filters: "
-            f"mean RNA UMI >= {min_umi_threshold}, "
             f"fraction expressing >= {min_frac_expressing}. "
             "Skipping correlation table generation and correlation plots."
         )
@@ -594,8 +616,7 @@ def corr_task(
 
     logging.info(
         f"Correlation filters retained {n_keep}/{len(genes)} genes "
-        f"(mean RNA UMI >= {min_umi_threshold}, "
-        f"fraction expressing >= {min_frac_expressing})."
+        f"(fraction expressing >= {min_frac_expressing})."
     )
 
     logging.info("Computing correlations...")

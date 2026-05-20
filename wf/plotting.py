@@ -431,7 +431,15 @@ def selected_report_genes(
     return list(pd.Index(gene_names).astype(str)[:n_fallback])
 
 
-def scatter_spatial(ax, coords, values, title, cmap="Spectral_r", categorical=False):
+def scatter_spatial(
+    ax,
+    coords,
+    values,
+    title,
+    cmap="Spectral_r",
+    categorical=False,
+    show_legend=True,
+):
     if categorical:
         labels = pd.Categorical(values.astype(str))
         codes = labels.codes
@@ -453,7 +461,8 @@ def scatter_spatial(ax, coords, values, title, cmap="Spectral_r", categorical=Fa
                 markersize=5,
                 label=str(label),
             ))
-        ax.legend(handles=handles, title="cluster", fontsize=6, loc="best")
+        if show_legend:
+            ax.legend(handles=handles, title="cluster", fontsize=6, loc="best")
     else:
         scatter = ax.scatter(
             coords[:, 0],
@@ -498,10 +507,10 @@ def write_spatial_expression_reports(
         return
 
     for modality, matrix, adata, fname, cmap in [
-        ("RNA", X_rna, rna, "rna_spatial_expression.png", "Spectral_r"),
-        ("ATAC GE", X_ge, ge, "atac_ge_spatial_expression.png", "Spectral_r"),
+        ("RNA", X_rna, rna, "genes_of_interest/rna_spatial_expression.png", "Spectral_r"),
+        ("ATAC GE", X_ge, ge, "genes_of_interest/atac_ge_spatial_expression.png", "Spectral_r"),
     ]:
-        for page_idx, sample in enumerate(sorted(set(samples)), start=1):
+        for sample in sorted(set(samples)):
             mask = samples == sample
             ncols = min(3, len(selected))
             nrows = int(np.ceil(len(selected) / ncols))
@@ -524,10 +533,9 @@ def write_spatial_expression_reports(
             for ax in axes[len(selected):]:
                 ax.axis("off")
             fig.tight_layout()
-            utils.save_fig_page(fig, out_dir, fname, page_idx)
+            utils.save_fig_suffix(fig, out_dir, fname, sample)
             plt.close(fig)
 
-    page_idx = 1
     for sample in sorted(set(samples)):
         mask = samples == sample
         for gene in selected:
@@ -546,10 +554,12 @@ def write_spatial_expression_reports(
                 f"{sample} ATAC GE: {gene}",
             )
             fig.tight_layout()
-            utils.save_fig_page(
-                fig, out_dir, "rna_vs_atac_ge_spatial_expression.png", page_idx
+            utils.save_fig_suffix(
+                fig,
+                out_dir,
+                "genes_of_interest/rna_vs_atac_ge_spatial_expression.png",
+                f"{sample}_{gene}",
             )
-            page_idx += 1
             plt.close(fig)
 
 
@@ -566,72 +576,37 @@ def write_spatial_cluster_reports(out_dir: str, rna, ge) -> None:
         logging.warning("No cluster labels found; skipping spatial cluster maps.")
         return
 
-    samples = sample_labels(rna)
-    ge.obsm["spatial"] = rna.obsm["spatial"].copy()
-    ge.obs[cluster_key] = rna.obs[cluster_key].values
-
-    for page_idx, sample in enumerate(sorted(set(samples)), start=1):
-        mask = samples == sample
-        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    samples = sorted(set(sample_labels(rna)))
+    ncols = min(4, len(samples))
+    nrows = int(np.ceil(len(samples) / ncols))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(4.5 * ncols, 4.5 * nrows),
+        squeeze=False,
+    )
+    axes = axes.ravel()
+    sample_labels_array = sample_labels(rna)
+    for i, sample in enumerate(samples):
+        ax = axes[i]
+        mask = sample_labels_array == sample
         scatter_spatial(
-            axes[0],
+            ax,
             rna.obsm["spatial"][mask],
             rna.obs[cluster_key].astype(str).values[mask],
-            f"{sample} RNA clusters",
-            categorical=True,
-        )
-        scatter_spatial(
-            axes[1],
-            ge.obsm["spatial"][mask],
-            ge.obs[cluster_key].astype(str).values[mask],
-            f"{sample} ATAC GE clusters",
-            categorical=True,
-        )
-        fig.tight_layout()
-        utils.save_fig_page(fig, out_dir, "spatial_cluster_maps.png", page_idx)
-        plt.close(fig)
-
-
-def write_attention_reports(out_dir: str, adata) -> None:
-    if "spatial" not in adata.obsm:
-        logging.warning("No spatial coordinates found; skipping attention maps.")
-        return
-    if "alpha_omics1" not in adata.obsm or "alpha_omics2" not in adata.obsm:
-        logging.warning("SpatialGlue attention weights missing; skipping attention maps.")
-        return
-
-    adata.obs["alpha_RNA_mean"] = np.asarray(adata.obsm["alpha_omics1"]).mean(axis=1)
-    adata.obs["alpha_ATAC_mean"] = np.asarray(adata.obsm["alpha_omics2"]).mean(axis=1)
-    samples = sample_labels(adata)
-
-    for page_idx, sample in enumerate(sorted(set(samples)), start=1):
-        mask = samples == sample
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        scatter_spatial(
-            axes[0],
-            adata.obsm["spatial"][mask],
-            adata.obs["alpha_RNA_mean"].values[mask],
-            f"{sample} RNA attention",
-            cmap="Blues",
-        )
-        scatter_spatial(
-            axes[1],
-            adata.obsm["spatial"][mask],
-            adata.obs["alpha_ATAC_mean"].values[mask],
-            f"{sample} ATAC attention",
-            cmap="Reds",
-        )
-        cluster_key = "sg_leiden_merged" if "sg_leiden_merged" in adata.obs else "sg_leiden"
-        scatter_spatial(
-            axes[2],
-            adata.obsm["spatial"][mask],
-            adata.obs[cluster_key].astype(str).values[mask],
             f"{sample} SpatialGlue clusters",
             categorical=True,
+            show_legend=(i == 0),
         )
-        fig.tight_layout()
-        utils.save_fig_page(fig, out_dir, "spatialglue_attention_maps.png", page_idx)
-        plt.close(fig)
+    for ax in axes[len(samples):]:
+        ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(
+        utils.fig_path(out_dir, "spatial_clusters.png"),
+        dpi=200,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
 
 
 def write_umi_reports(
@@ -695,28 +670,13 @@ def write_umi_reports(
         ax.set_ylabel("Expression")
         ax.set_title(f"{gene} expression by cluster")
         fig.tight_layout()
-        utils.save_fig_page(fig, out_dir, "umi_violin_per_cluster.png", page_idx)
+        utils.save_fig_suffix(
+            fig,
+            out_dir,
+            "genes_of_interest/umi_violin_per_cluster.png",
+            gene,
+        )
         plt.close(fig)
-
-    mean_pivot = umi.pivot_table(
-        index="cluster", columns="gene", values="mean_umi_per_spot"
-    ).reindex(index=clusters)
-    fig, ax = plt.subplots(
-        figsize=(max(6, 0.5 * len(selected)), max(4, 0.35 * len(clusters)))
-    )
-    im = ax.imshow(mean_pivot.fillna(0).values, aspect="auto", cmap="viridis")
-    ax.set_xticks(np.arange(len(mean_pivot.columns)))
-    ax.set_xticklabels(mean_pivot.columns, rotation=90)
-    ax.set_yticks(np.arange(len(mean_pivot.index)))
-    ax.set_yticklabels(mean_pivot.index)
-    ax.set_xlabel("Gene")
-    ax.set_ylabel("Cluster")
-    ax.set_title("Mean raw UMI per spot")
-    fig.colorbar(im, ax=ax, label="mean UMI")
-    fig.tight_layout()
-    dot_path = utils.fig_path(out_dir, "umi_dotplot_per_cluster.png")
-    fig.savefig(dot_path, bbox_inches="tight")
-    plt.close(fig)
 
 
 def plot_correlation_overview(corr_df: pd.DataFrame, outpath: str) -> None:
@@ -817,62 +777,3 @@ def write_cluster_correlation_outputs(
     per_cluster_path = utils.table_path(out_dir, "per_cluster_rna_atac_ge.csv")
     per_cluster.to_csv(per_cluster_path, index=False)
     logging.info(f"Saved per-cluster RNA/ATAC GE table: {per_cluster_path}")
-
-    plot_genes = selected_genes[:10]
-    fig, axes = plt.subplots(
-        2,
-        len(plot_genes),
-        figsize=(max(5, 3.2 * len(plot_genes)), 7),
-        squeeze=False,
-    )
-    for j, gene in enumerate(plot_genes):
-        sub = per_cluster[per_cluster["gene"] == gene]
-        labels = sub["cluster"].astype(str).tolist()
-        axes[0, j].bar(labels, sub["mean_rna_lognorm"], color="steelblue")
-        axes[0, j].set_title(f"{gene}\nRNA")
-        axes[0, j].tick_params(axis="x", rotation=45)
-        axes[1, j].bar(labels, sub["mean_atac_ge"], color="coral")
-        axes[1, j].set_title("ATAC GE")
-        axes[1, j].tick_params(axis="x", rotation=45)
-    axes[0, 0].set_ylabel("Mean")
-    axes[1, 0].set_ylabel("Mean")
-    fig.tight_layout()
-    bar_path = utils.fig_path(out_dir, "per_cluster_rna_atac_ge.png")
-    fig.savefig(bar_path, bbox_inches="tight")
-    plt.close(fig)
-
-    heatmap_genes = corr_df.sort_values(
-        "abs_rho", ascending=False
-    )["gene"].astype(str).head(n_top_heatmap).tolist()
-    heatmap_genes = [g for g in heatmap_genes if g in gene_to_idx]
-    if requested_genes:
-        heatmap_genes = sorted(set(heatmap_genes + selected_genes))
-    if not heatmap_genes:
-        return
-
-    heatmap_rows = []
-    for cluster in clusters:
-        mask = cluster_labels == cluster
-        heatmap_rows.append({
-            gene: float(X_rna[mask, gene_to_idx[gene]].mean())
-            for gene in heatmap_genes
-        })
-    heatmap = pd.DataFrame(heatmap_rows, index=clusters)
-    heatmap_scaled = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-9)
-
-    fig, ax = plt.subplots(
-        figsize=(max(8, 0.45 * len(heatmap_genes)), max(4, 0.35 * len(clusters)))
-    )
-    im = ax.imshow(heatmap_scaled.values, aspect="auto", cmap="viridis")
-    ax.set_xticks(np.arange(len(heatmap_genes)))
-    ax.set_xticklabels(heatmap_genes, rotation=90)
-    ax.set_yticks(np.arange(len(clusters)))
-    ax.set_yticklabels(clusters)
-    ax.set_xlabel("Gene")
-    ax.set_ylabel("Cluster")
-    ax.set_title("Scaled RNA expression by SpatialGlue cluster")
-    fig.colorbar(im, ax=ax, label="scaled mean")
-    fig.tight_layout()
-    heatmap_path = utils.fig_path(out_dir, "cluster_gene_heatmap.png")
-    fig.savefig(heatmap_path, bbox_inches="tight")
-    plt.close(fig)

@@ -55,6 +55,13 @@ metadata = LatchMetadata(
                 typically named 'combined_ge.h5ad'.",
             batch_table_column=True,
         ),
+        "spatialglue_model_pickle": LatchParameter(
+            display_name="Existing SpatialGlue model pickle",
+            description="Optional SpatialGlue_model.pickle from a previous \
+                run. If provided, the workflow skips SpatialGlue training and \
+                reuses the saved embedding/attention output.",
+            batch_table_column=True,
+        ),
         "n_neighbors": LatchParameter(
             display_name="SpatialGlue clustering neighbors",
             description="Number of neighbors used when clustering the \
@@ -78,12 +85,6 @@ metadata = LatchMetadata(
             description="Optional resolution override from the sweep. Set to \
                 0 to automatically use the resolution with the best Moran's I \
                 score.",
-            batch_table_column=True,
-        ),
-        "min_umi_threshold": LatchParameter(
-            display_name="Correlation min mean UMI",
-            description="Minimum mean raw RNA UMI per gene required before \
-                computing RNA vs gene accessibility correlation.",
             batch_table_column=True,
         ),
         "min_frac_expressing": LatchParameter(
@@ -123,11 +124,11 @@ def glue_wf(
     wt_anndata: LatchFile,
     ge_anndata: LatchFile,
     atac_anndata: Optional[LatchFile] = None,
+    spatialglue_model_pickle: Optional[LatchFile] = None,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
     resolutions: str = DEFAULT_RESOLUTIONS,
     chosen_resolution: float = 0.0,
-    min_umi_threshold: float = 0.5,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
     compute_cluster_markers: bool = True,
@@ -150,6 +151,7 @@ def glue_wf(
         chosen_resolution=chosen_resolution,
         compute_cluster_markers=compute_cluster_markers,
         marker_top_n=marker_top_n,
+        spatialglue_model_pickle=spatialglue_model_pickle,
     )
 
     coverage_results = coverage_task(
@@ -161,7 +163,6 @@ def glue_wf(
         project_name=project_name,
         results_dir=results,
         ge_anndata=ge_anndata,
-        min_umi_threshold=min_umi_threshold,
         min_frac_expressing=min_frac_expressing,
         genes_of_interest=genes_of_interest,
     )
