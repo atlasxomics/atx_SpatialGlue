@@ -568,7 +568,7 @@ def write_spatial_cluster_reports(out_dir: str, rna, ge) -> None:
         logging.warning("No spatial coordinates found; skipping spatial cluster maps.")
         return
     cluster_key = None
-    for key in ["sg_leiden_merged", "sg_leiden"]:
+    for key in ["sg_clusters", "sg_leiden_merged", "sg_leiden"]:
         if key in rna.obs.columns:
             cluster_key = key
             break
@@ -618,7 +618,7 @@ def write_umi_reports(
     report_genes: list[str],
 ) -> None:
     cluster_key = None
-    for key in ["sg_leiden_merged", "sg_leiden"]:
+    for key in ["sg_clusters", "sg_leiden_merged", "sg_leiden"]:
         if key in rna.obs.columns:
             cluster_key = key
             break
@@ -729,7 +729,7 @@ def write_cluster_correlation_outputs(
     n_top_heatmap: int = 20,
 ) -> None:
     cluster_key = None
-    for key in ["sg_leiden_merged", "sg_leiden"]:
+    for key in ["sg_clusters", "sg_leiden_merged", "sg_leiden"]:
         if key in rna.obs.columns:
             cluster_key = key
             break

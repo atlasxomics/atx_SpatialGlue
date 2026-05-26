@@ -51,12 +51,12 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
     glue_dir = os.path.join(out_dir, "glue_cluster_coverages")
     export_coverage_group(
         atac,
-        groupby="sg_leiden_merged",
+        groupby="sg_clusters",
         out_dir=glue_dir,
         suffix="_cluster.bw",
     )
 
-    reserved = {"sg_leiden", "sg_leiden_merged"}
+    reserved = {"sg_clusters", "sg_leiden", "sg_leiden_merged"}
     rna_cluster_cols = candidate_cluster_columns(rna, exclude=reserved)
     if rna_cluster_cols:
         rna_dir = os.path.join(out_dir, "rna_cluster_coverages")

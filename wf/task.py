@@ -319,8 +319,7 @@ def glue_train_task(
             f"resolutions={resolutions}."
         )
 
-    adata.obs["sg_leiden"] = adata.obs[final_raw_key].astype("category")
-    adata.obs["sg_leiden_merged"] = adata.obs[final_merged_key].astype("category")
+    adata.obs["sg_clusters"] = adata.obs[final_merged_key].astype("category")
 
     sweep_path = utils.table_path(out_dir, "spatialglue_cluster_sweep.csv")
     pd.DataFrame(sweep_rows).to_csv(sweep_path, index=False)
@@ -331,7 +330,7 @@ def glue_train_task(
     sc.settings.figdir = figures_dir
     sc.pl.umap(
         adata,
-        color=["sg_leiden_merged"],
+        color=["sg_clusters"],
         size=utils.SCANPY_CLUSTER_POINT_SIZE,
         save=".png",
     )
@@ -342,9 +341,11 @@ def glue_train_task(
     if atac_tiles_matched is not None:
         result_objects.append(atac_tiles_matched)
     for obj in result_objects:
-        obj.obs["sg_leiden"] = adata.obs.loc[obj.obs_names, "sg_leiden"].values
-        obj.obs["sg_leiden_merged"] = adata.obs.loc[
-            obj.obs_names, "sg_leiden_merged"
+        for old_key in ["sg_leiden", "sg_leiden_merged", "sg_merged_leiden"]:
+            if old_key in obj.obs.columns:
+                del obj.obs[old_key]
+        obj.obs["sg_clusters"] = adata.obs.loc[
+            obj.obs_names, "sg_clusters"
         ].values
 
     for obj in [rna_result, ge_result]:
@@ -370,7 +371,7 @@ def glue_train_task(
                 write_cluster_marker_outputs(
                     marker_adata,
                     out_dir,
-                    cluster_key="sg_leiden_merged",
+                    cluster_key="sg_clusters",
                     marker_top_n=marker_top_n,
                     modality_name=modality_name,
                     output_prefix=output_prefix,

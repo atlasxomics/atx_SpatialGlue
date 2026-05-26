@@ -36,7 +36,7 @@ def ensure_scanpy_log1p_metadata(adata) -> None:
 def write_cluster_marker_outputs(
     adata,
     out_dir: str,
-    cluster_key: str = "sg_leiden_merged",
+    cluster_key: str = "sg_clusters",
     marker_top_n: int = 50,
     modality_name: str = "RNA",
     output_prefix: str = "",
