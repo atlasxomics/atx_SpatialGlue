@@ -21,10 +21,6 @@ dependencies:
   - anndata=0.8.0
   - scanpy=1.9.1
 
-  # R interoperability
-  - r-base=4.0.3
-  - rpy2=3.4.1
-
   # PyTorch + CUDA (compute capability sm_86 for A10G)
   - pytorch=2.1
   - torchvision=0.16

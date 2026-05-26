@@ -1,6 +1,7 @@
 import glob
 import logging
 import os
+import re
 import subprocess
 from typing import Optional
 
@@ -8,6 +9,15 @@ import pandas as pd
 import snapatac2 as snap
 
 import wf.utils as utils
+
+_BARCODE_REGEX = re.compile(r"([ATCG]{16})", re.IGNORECASE)
+
+
+def _extract_barcode(value: str) -> Optional[str]:
+    match = _BARCODE_REGEX.search(str(value).upper())
+    if match is None:
+        return None
+    return match.group(1)
 
 
 def candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list[str]:
@@ -95,3 +105,57 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
         logging.info("No pre-existing ATAC cluster columns found for coverage export.")
 
     logging.info("Finished coverage track export.")
+
+
+def write_archr_cluster_metadata(rna, path: str) -> None:
+    if "sg_clusters" not in rna.obs:
+        raise RuntimeError(
+            "Cannot export ArchR coverages because RNA AnnData is missing "
+            "obs['sg_clusters']."
+        )
+
+    clusters = rna.obs["sg_clusters"].astype(str)
+    metadata = pd.DataFrame({
+        "cell_id": rna.obs_names.astype(str),
+        "barcode": [_extract_barcode(cell) for cell in rna.obs_names.astype(str)],
+        "sg_clusters": clusters.values,
+    })
+
+    missing_barcodes = metadata["barcode"].isna().sum()
+    if missing_barcodes:
+        logging.warning(
+            "ArchR coverage metadata has %s cells without 16 bp barcodes; "
+            "these cells can only match by exact cell ID.",
+            missing_barcodes,
+        )
+
+    metadata.to_csv(path, index=False)
+
+
+def export_archr_cluster_coverages(
+    out_dir: str,
+    archr_project_path: str,
+    rna,
+) -> None:
+    logging.info("Creating ArchR coverage tracks...")
+
+    os.makedirs(out_dir, exist_ok=True)
+    cluster_csv = os.path.join(out_dir, "archr_sg_clusters.csv")
+    write_archr_cluster_metadata(rna, cluster_csv)
+
+    script_path = os.path.join(os.path.dirname(__file__), "archr_coverages.R")
+    if not os.path.exists(script_path):
+        raise RuntimeError(f"Missing ArchR coverage helper script: {script_path}")
+
+    subprocess.run(
+        [
+            "Rscript",
+            script_path,
+            archr_project_path,
+            cluster_csv,
+            out_dir,
+        ],
+        check=True,
+    )
+
+    logging.info("Finished ArchR coverage track export.")

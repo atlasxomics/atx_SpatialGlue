@@ -49,6 +49,65 @@ run mamba env create \
     --name spatialglue --yes
 env PATH=/opt/conda/envs/spatialglue/bin:$PATH
 
+# Install R/ArchR system libraries for ArchRProject coverage export.
+# Keep R outside the conda env so mamba only solves the Python/CUDA stack.
+run apt-get update --yes && \
+    apt-get install --yes \
+        apt-transport-https \
+        aptitude \
+        build-essential \
+        default-jdk \
+        gdebi-core \
+        gfortran \
+        libcairo2-dev \
+        libatlas-base-dev \
+        libbz2-dev \
+        libcurl4-openssl-dev \
+        libfontconfig1-dev \
+        libfreetype6-dev \
+        libfribidi-dev \
+        libgdal-dev \
+        libgit2-dev \
+        libgsl-dev \
+        libharfbuzz-dev \
+        libhdf5-dev \
+        libicu-dev \
+        libjpeg-dev \
+        liblzma-dev \
+        libmagick++-dev \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libpcre3-dev \
+        libssl-dev \
+        libtcl8.6 \
+        libtiff5 \
+        libtiff-dev \
+        libtk8.6 \
+        libxml2-dev \
+        libx11-dev \
+        libxt-dev \
+        locales \
+        make \
+        pandoc \
+        r-base \
+        r-base-dev \
+        r-cran-rjava \
+        tzdata \
+        vim \
+        wget \
+        zlib1g-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+run R CMD javareconf && \
+    echo "TZ=$(cat /etc/timezone)" >> /etc/R/Renviron.site && \
+    R -e "install.packages(c('BiocManager', 'remotes'), repos = 'https://cran.r-project.org')" && \
+    R -e "options(repos = BiocManager::repositories()); remotes::install_github('bnprks/BPCells/r', ref = 'a3096e5', upgrade = 'never')" && \
+    R -e "options(repos = BiocManager::repositories()); remotes::install_github('mojaveazure/seurat-disk', ref = '877d4e1', upgrade = 'never')" && \
+    R -e "BiocManager::install('sparseMatrixStats', update = FALSE, ask = FALSE)" && \
+    R -e "options(repos = BiocManager::repositories()); remotes::install_github('jpmcga/ArchR', ref = '619f75d', upgrade = 'never')" && \
+    R -e "remotes::install_version('ggplot2', version = '3.4.1', repos = 'https://cran.r-project.org')"
+
 # Install latch (pyflyte) inside the conda env so serialization sees workflow deps
 run pip install latch==2.53.10
 run pip install SpatialGlue==1.1.5

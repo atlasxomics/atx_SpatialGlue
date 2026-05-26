@@ -39,7 +39,15 @@ metadata = LatchMetadata(
             description="Optional H5AD file containing an AnnData object with \
                 an ATAC tile matrix as .X. If omitted, SpatialGlue runs with \
                 RNA and gene accessibility inputs and coverage tracks are \
-                skipped.",
+                exported from an ArchRProject if one is supplied.",
+            batch_table_column=True,
+        ),
+        "archr_project": LatchParameter(
+            display_name="ArchRProject",
+            description="Optional ArchRProject directory used to export \
+                coverage tracks when an epigenomic tile AnnData is not \
+                supplied. If both are supplied, the tile AnnData coverage path \
+                is used.",
             batch_table_column=True,
         ),
         "wt_anndata": LatchParameter(
@@ -124,6 +132,7 @@ def glue_wf(
     wt_anndata: LatchFile,
     ge_anndata: LatchFile,
     atac_anndata: Optional[LatchFile] = None,
+    archr_project: Optional[LatchDir] = None,
     spatialglue_model_pickle: Optional[LatchFile] = None,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
@@ -157,6 +166,7 @@ def glue_wf(
     coverage_results = coverage_task(
         project_name=project_name,
         results_dir=results,
+        archr_project=archr_project,
     )
 
     corr_results = corr_task(

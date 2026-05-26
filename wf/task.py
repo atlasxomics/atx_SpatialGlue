@@ -22,7 +22,7 @@ from latch.resources.tasks import custom_task
 from latch.types import LatchDir, LatchFile
 
 import wf.correlation as corr
-from wf.coverage import export_cluster_coverages
+from wf.coverage import export_archr_cluster_coverages, export_cluster_coverages
 import wf.genestats as gs
 from wf.markers import write_cluster_marker_outputs
 import wf.plotting as pl
@@ -64,7 +64,10 @@ def glue_preprocess_task(
         logging.info("Reading ATAC tile AnnData...")
         atac = sc.read_h5ad(atac_anndata.local_path)
     else:
-        logging.info("No ATAC tile AnnData provided; coverage export will be skipped.")
+        logging.info(
+            "No ATAC tile AnnData provided; coverage export will require an "
+            "ArchRProject."
+        )
 
     logging.info("Reading gene accessibility AnnData...")
     ge = sc.read_h5ad(ge_anndata.local_path)
@@ -406,6 +409,7 @@ def glue_train_task(
 def coverage_task(
     project_name: str,
     results_dir: LatchDir,
+    archr_project: Optional[LatchDir] = None,
 ) -> LatchDir:
 
     out_dir = f"/root/{project_name}_coverages"
@@ -414,10 +418,10 @@ def coverage_task(
     manifest_path = LatchFile(f"{results_dir.remote_path}/coverage_manifest.csv").local_path
     manifest = pd.read_csv(manifest_path)
     has_atac_tiles = utils.as_bool(manifest.loc[0, "has_atac_tiles"])
-    if not has_atac_tiles:
+    if not has_atac_tiles and archr_project is None:
         msg = (
-            "No ATAC tile matrix was provided, so coverage track generation "
-            "was skipped."
+            "No ATAC tile matrix or ArchRProject was provided, so coverage "
+            "track generation was skipped."
         )
         logging.warning(msg)
         message(typ="warning", data={"title": "Coverage skipped", "body": msg})
@@ -425,15 +429,27 @@ def coverage_task(
             f.write(f"{msg}\n")
         return LatchDir(out_dir, f"{results_dir.remote_path}/coverages")
 
-    logging.info("Downloading clustered RNA and ATAC AnnData for coverage export...")
     rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
-    atac_path = LatchFile(f"{results_dir.remote_path}/atac_glue.h5ad").local_path
-
-    logging.info("Reading clustered AnnData objects...")
+    logging.info("Reading clustered RNA AnnData for coverage export...")
     rna = sc.read_h5ad(rna_path)
-    atac = sc.read_h5ad(atac_path)
 
-    export_cluster_coverages(out_dir, atac, rna)
+    if has_atac_tiles:
+        if archr_project is not None:
+            msg = (
+                "Both ATAC tile AnnData and ArchRProject were provided. Using "
+                "the ATAC tile AnnData coverage path."
+            )
+            logging.warning(msg)
+            message(typ="warning", data={"title": "Coverage source", "body": msg})
+
+        logging.info("Downloading clustered ATAC AnnData for coverage export...")
+        atac_path = LatchFile(f"{results_dir.remote_path}/atac_glue.h5ad").local_path
+        logging.info("Reading clustered ATAC AnnData object...")
+        atac = sc.read_h5ad(atac_path)
+        export_cluster_coverages(out_dir, atac, rna)
+    else:
+        logging.info("Using ArchRProject for coverage export...")
+        export_archr_cluster_coverages(out_dir, archr_project.local_path, rna)
 
     return LatchDir(out_dir, f"{results_dir.remote_path}/coverages")
 
