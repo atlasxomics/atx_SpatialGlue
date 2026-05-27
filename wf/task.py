@@ -9,13 +9,8 @@ import sys
 from typing import Optional
 
 import numpy as np
-import scanpy as sc
-import torch
 
 from scipy import sparse
-
-from SpatialGlue.preprocess import construct_neighbor_graph
-from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
 from latch.functions.messages import message
 from latch.resources.tasks import custom_task
@@ -44,6 +39,8 @@ def glue_preprocess_task(
     ge_anndata: LatchFile,
     atac_anndata: Optional[LatchFile] = None,
 ) -> LatchDir:
+    import scanpy as sc
+    import torch
 
     # ------------------ Initialize ---------------------
     logging.info("Starting glue preprocessing task...")
@@ -140,10 +137,12 @@ def glue_train_task(
     min_cluster_size: int = 200,
     resolutions: str = utils.DEFAULT_RESOLUTIONS,
     chosen_resolution: float = 0.0,
-    compute_cluster_markers: bool = True,
-    marker_top_n: int = 50,
     spatialglue_model_pickle: Optional[LatchFile] = None,
 ) -> LatchDir:
+    import scanpy as sc
+    import torch
+    from SpatialGlue.preprocess import construct_neighbor_graph
+    from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
     # ------------------ Initialize ---------------------
     logging.info("Starting glue training task...")
@@ -364,27 +363,26 @@ def glue_train_task(
         if key in adata.obsm and adata.obsm[key] is not None:
             rna_result.obsm[key] = adata.obsm[key]
 
-    if compute_cluster_markers:
-        marker_jobs = [
-            (rna_result, "RNA", "rna_"),
-            (ge_result, "GE", "ge_"),
-        ]
-        for marker_adata, modality_name, output_prefix in marker_jobs:
-            try:
-                write_cluster_marker_outputs(
-                    marker_adata,
-                    out_dir,
-                    cluster_key="sg_clusters",
-                    marker_top_n=marker_top_n,
-                    modality_name=modality_name,
-                    output_prefix=output_prefix,
-                )
-            except Exception as e:
-                warning = (
-                    f"Skipping {modality_name} cluster marker genes after error: {e}"
-                )
-                logging.exception(warning)
-                message(typ="warning", data={"title": warning, "body": warning})
+    marker_jobs = [
+        (rna_result, "RNA", "rna_"),
+        (ge_result, "GE", "ge_"),
+    ]
+    for marker_adata, modality_name, output_prefix in marker_jobs:
+        try:
+            write_cluster_marker_outputs(
+                marker_adata,
+                out_dir,
+                cluster_key="sg_clusters",
+                marker_top_n=50,
+                modality_name=modality_name,
+                output_prefix=output_prefix,
+            )
+        except Exception as e:
+            warning = (
+                f"Skipping {modality_name} cluster marker genes after error: {e}"
+            )
+            logging.exception(warning)
+            message(typ="warning", data={"title": warning, "body": warning})
 
     logging.info("Writing data...")
     if atac_tiles_matched is not None:
@@ -411,6 +409,7 @@ def coverage_task(
     results_dir: LatchDir,
     archr_project: Optional[LatchDir] = None,
 ) -> LatchDir:
+    import scanpy as sc
 
     out_dir = f"/root/{project_name}_coverages"
     os.makedirs(out_dir, exist_ok=True)
@@ -471,6 +470,7 @@ def corr_task(
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
+    import scanpy as sc
 
     out_dir = f"/root/{project_name}"
     os.makedirs(out_dir, exist_ok=True)

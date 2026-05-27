@@ -6,7 +6,6 @@ import subprocess
 from typing import Optional
 
 import pandas as pd
-import snapatac2 as snap
 
 import wf.utils as utils
 
@@ -38,6 +37,8 @@ def candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list
 
 
 def export_coverage_group(atac, groupby: str, out_dir: str, suffix: str) -> None:
+    import snapatac2 as snap
+
     os.makedirs(out_dir, exist_ok=True)
     before = set(glob.glob("*.bw"))
     snap.ex.export_coverage(

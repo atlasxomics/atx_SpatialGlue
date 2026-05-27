@@ -1,20 +1,20 @@
+from __future__ import annotations
+
 import logging
 import os
 import re
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import pandas as pd
 import warnings
 
-from anndata import AnnData
 from scipy import sparse
-from scipy.spatial.distance import cdist
-from sklearn.decomposition import TruncatedSVD
-from sklearn.neighbors import kneighbors_graph
-from sklearn.preprocessing import StandardScaler
-from typing import Optional
 
 from latch.functions.messages import message
+
+if TYPE_CHECKING:
+    from anndata import AnnData
 
 _BARCODE_REGEX = re.compile(r"([ATCG]{16})")
 _DONOR_PREFIX_REGEX = re.compile(r"(D\d{5})")
@@ -231,6 +231,8 @@ def merge_small_clusters(
     new_key: Optional[str] = None,
     verbose: bool = True,
 ):
+    from scipy.spatial.distance import cdist
+
     """
     Merge clusters smaller than `min_cells` into the nearest larger cluster
     (nearest by centroid distance in `embed_key` space).
@@ -438,6 +440,8 @@ def morans_i(connectivities, labels) -> float:
 
 
 def spatial_connectivities(adata, n_neighbors: int):
+    from sklearn.neighbors import kneighbors_graph
+
     if "spatial" not in adata.obsm:
         logging.warning(
             "No adata.obsm['spatial'] found; using embedding neighbors for Moran's I."
@@ -511,6 +515,8 @@ def as_float32_csr(X):
 
 
 def compute_lsi(X, n_components: int = N_COMPONENTS, seed: int = SEED) -> np.ndarray:
+    from sklearn.decomposition import TruncatedSVD
+
     """Compute TF-IDF + log1p + SVD LSI, dropping the first depth component."""
     X_raw = as_float32_csr(X)
     X_tfidf = X_raw.copy()
@@ -538,6 +544,9 @@ def compute_lsi(X, n_components: int = N_COMPONENTS, seed: int = SEED) -> np.nda
 
 
 def add_rna_features(rna, n_components: int = N_COMPONENTS) -> None:
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.preprocessing import StandardScaler
+
     if "feat" in rna.obsm:
         logging.info("RNA feat already present; reusing it.")
         return

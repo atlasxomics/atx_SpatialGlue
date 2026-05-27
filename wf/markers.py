@@ -2,7 +2,6 @@ import logging
 
 import numpy as np
 import pandas as pd
-import scanpy as sc
 
 import wf.plotting as pl
 import wf.utils as utils
@@ -41,6 +40,8 @@ def write_cluster_marker_outputs(
     modality_name: str = "RNA",
     output_prefix: str = "",
 ) -> None:
+    import scanpy as sc
+
     if marker_top_n < 1:
         raise ValueError("marker_top_n must be at least 1.")
     if cluster_key not in adata.obs.columns:

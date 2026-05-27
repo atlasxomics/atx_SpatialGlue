@@ -7,6 +7,9 @@ from typing import Optional
 from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
+from latch.types.metadata import (
+    Fork, ForkBranch, Params, Section, Spoiler, Text,
+)
 
 from wf.utils import DEFAULT_RESOLUTIONS
 from wf.task import (
@@ -22,6 +25,52 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+flow = [
+    Section(
+        "Input Data",
+        Params("project_name"),
+        Params("wt_anndata"),
+        Params("ge_anndata"),
+        Spoiler(
+            "ATAC Data",
+            Text(
+                "Optionally, add data for epigenomic coverage tracks. Input can"
+                "be either an AnnData h5ad file containing a tile matrix or an"
+                "ArchRProject directory."
+            ),
+            Fork(
+                "epigenomic_input_type",
+                "Choose epigenomic input type",
+                atac_anndata=ForkBranch(
+                    "atac_anndata", Params("atac_anndata")
+                ),
+                archr_project=ForkBranch(
+                    "archr_project", Params("archr_project")
+                ),
+            ),
+        ),
+    ),
+    Section(
+        "Clustering",
+        Text(
+            "Parameters for SpatialGlue clustering"
+        ),
+        Params("n_neighbors"),
+        Params("min_cluster_size"),
+        Params("resolutions"),
+        Params("chosen_resolution"),
+    ),
+    Section(
+        "Correlation Statistics",
+        Params("min_frac_expressing"),
+        Params("genes_of_interest"),
+    ),
+    Spoiler(
+        "Advanced Options",
+        Params("spatialglue_model_pickle")
+    )
+]
 
 metadata = LatchMetadata(
     display_name="atx_glue",
@@ -89,7 +138,7 @@ metadata = LatchMetadata(
             batch_table_column=True,
         ),
         "chosen_resolution": LatchParameter(
-            display_name="Chosen Leiden resolution",
+            display_name="Chosen Leiden resolution (override)",
             description="Optional resolution override from the sweep. Set to \
                 0 to automatically use the resolution with the best Moran's I \
                 score.",
@@ -109,20 +158,9 @@ metadata = LatchMetadata(
                 the top correlated genes.",
             batch_table_column=True,
         ),
-        "compute_cluster_markers": LatchParameter(
-            display_name="Compute cluster marker genes",
-            description="Rank differential marker genes for SpatialGlue \
-                clusters and write marker tables plus a heatmap.",
-            batch_table_column=True,
-        ),
-        "marker_top_n": LatchParameter(
-            display_name="Marker genes per cluster",
-            description="Number of top marker genes per cluster to include in \
-                marker summary tables and the cluster marker heatmap.",
-            batch_table_column=True,
-        ),
     },
     tags=[],
+    flow=flow
 )
 
 
@@ -140,8 +178,6 @@ def glue_wf(
     chosen_resolution: float = 0.0,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
-    compute_cluster_markers: bool = True,
-    marker_top_n: int = 50,
 ) -> LatchDir:
 
     prepared = glue_preprocess_task(
@@ -158,8 +194,6 @@ def glue_wf(
         min_cluster_size=min_cluster_size,
         resolutions=resolutions,
         chosen_resolution=chosen_resolution,
-        compute_cluster_markers=compute_cluster_markers,
-        marker_top_n=marker_top_n,
         spatialglue_model_pickle=spatialglue_model_pickle,
     )
 

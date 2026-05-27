@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import logging
 import numpy as np
 import pandas as pd
 import sys
 
-from anndata import AnnData
 from numpy import ndarray
-from scipy.stats import rankdata, t
-from statsmodels.stats.multitest import multipletests
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
+
+if TYPE_CHECKING:
+    from anndata import AnnData
 
 
 logging.basicConfig(
@@ -25,6 +27,9 @@ def get_corr_df(
     array2_name: str = "GA",
     chunk_size: int = 1000,
 ) -> pd.DataFrame:
+    from scipy.stats import rankdata, t
+    from statsmodels.stats.multitest import multipletests
+
     """Compute column-wise Spearman correlations with p-values/FDR.
 
     The implementation ranks and correlates genes in chunks. This keeps the
