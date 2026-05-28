@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 import subprocess
 from typing import Optional
 
@@ -148,9 +149,29 @@ def export_archr_cluster_coverages(
     if not os.path.exists(script_path):
         raise RuntimeError(f"Missing ArchR coverage helper script: {script_path}")
 
+    rscript = os.environ.get("ARCHR_RSCRIPT")
+    if not rscript:
+        if os.path.exists("/usr/local/bin/Rscript"):
+            rscript = "/usr/local/bin/Rscript"
+        elif os.path.exists("/usr/bin/Rscript"):
+            rscript = "/usr/bin/Rscript"
+        else:
+            rscript = "Rscript"
+    if os.path.sep not in rscript and shutil.which(rscript) is None:
+        raise RuntimeError(f"Could not find Rscript executable: {rscript}")
+
     subprocess.run(
         [
-            "Rscript",
+            rscript,
+            "-e",
+            "library(ArchR); cat('Using ArchR ', as.character(packageVersion('ArchR')), '\\n', sep = '')",
+        ],
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            rscript,
             script_path,
             archr_project_path,
             cluster_csv,

@@ -69,6 +69,7 @@ run apt-get update --yes && \
         libgdal-dev \
         libgit2-dev \
         libgsl-dev \
+        libglpk-dev \
         libharfbuzz-dev \
         libhdf5-dev \
         libicu-dev \
@@ -99,14 +100,29 @@ run apt-get update --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-run R CMD javareconf && \
-    echo "TZ=$(cat /etc/timezone)" >> /etc/R/Renviron.site && \
-    R -e "install.packages(c('BiocManager', 'remotes'), repos = 'https://cran.r-project.org')" && \
-    R -e "options(repos = BiocManager::repositories()); remotes::install_github('bnprks/BPCells/r', ref = 'a3096e5', upgrade = 'never')" && \
-    R -e "options(repos = BiocManager::repositories()); remotes::install_github('mojaveazure/seurat-disk', ref = '877d4e1', upgrade = 'never')" && \
-    R -e "BiocManager::install('sparseMatrixStats', update = FALSE, ask = FALSE)" && \
-    R -e "options(repos = BiocManager::repositories()); remotes::install_github('jpmcga/ArchR', ref = '619f75d', upgrade = 'never')" && \
-    R -e "remotes::install_version('ggplot2', version = '3.4.1', repos = 'https://cran.r-project.org')"
+# Use the known-good combined_cluster_wf R/ArchR lockfile.
+run export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin && \
+    unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH LD_LIBRARY_PATH PKG_CONFIG_PATH CFLAGS CPPFLAGS LDFLAGS && \
+    wget https://cran.r-project.org/src/base/R-4/R-4.3.3.tar.gz && \
+    tar zxvf R-4.3.3.tar.gz && \
+    rm R-4.3.3.tar.gz && \
+    cd R-4.3.3 && \
+    ./configure --enable-R-shlib && \
+    make && \
+    make install && \
+    cd /tmp/docker-build/work && \
+    rm -rf R-4.3.3
+run /usr/local/bin/R CMD javareconf && \
+    echo "TZ=$(cat /etc/timezone)" >> /etc/R/Renviron.site
+run /usr/local/bin/R -e "install.packages('https://cran.r-project.org/src/contrib/Archive/renv/renv_1.0.7.tar.gz', repos = NULL, type = 'source')"
+copy renv.lock /root/renv.lock
+run mkdir -p /root/renv
+copy renv/activate.R /root/renv/activate.R
+copy renv/settings.json /root/renv/settings.json
+workdir /root
+run /usr/local/bin/R -e "renv::restore()" && \
+    /usr/local/bin/Rscript -e "library(ArchR); cat('ArchR ', as.character(packageVersion('ArchR')), '\n', sep = '')"
+workdir /tmp/docker-build/work/
 
 # Install latch (pyflyte) inside the conda env so serialization sees workflow deps
 run pip install latch==2.53.10
