@@ -15,6 +15,37 @@ suppressPackageStartupMessages({
   library(ArchR)
 })
 
+load_bsgenome_object <- function(genome_pkg) {
+  if (!grepl("^BSgenome\\.", genome_pkg)) {
+    return(invisible(FALSE))
+  }
+
+  message("Loading BSgenome package: ", genome_pkg)
+  suppressPackageStartupMessages(
+    library(genome_pkg, character.only = TRUE)
+  )
+
+  genome_obj <- tryCatch(
+    get(genome_pkg, envir = asNamespace(genome_pkg)),
+    error = function(e) {
+      get(genome_pkg, inherits = TRUE)
+    }
+  )
+  assign(genome_pkg, genome_obj, envir = .GlobalEnv)
+  message("Registered BSgenome object in .GlobalEnv: ", genome_pkg)
+  invisible(TRUE)
+}
+
+for (genome_pkg in c(
+  "BSgenome.Hsapiens.UCSC.hg38",
+  "BSgenome.Mmusculus.UCSC.mm10",
+  "BSgenome.Rnorvegicus.UCSC.rn6"
+)) {
+  if (requireNamespace(genome_pkg, quietly = TRUE)) {
+    load_bsgenome_object(genome_pkg)
+  }
+}
+
 threads <- suppressWarnings(as.integer(Sys.getenv("ARCHR_THREADS", "8")))
 if (is.na(threads) || threads < 1) {
   threads <- 8
@@ -25,8 +56,14 @@ extract_barcode <- function(x) {
   x <- toupper(as.character(x))
   matches <- regexpr("[ATCG]{16}", x, perl = TRUE)
   out <- rep(NA_character_, length(x))
-  has_match <- matches > 0
-  out[has_match] <- regmatches(x[has_match], matches[has_match])
+  has_match <- !is.na(matches) & matches > 0
+  if (any(has_match)) {
+    out[has_match] <- substring(
+      x[has_match],
+      matches[has_match],
+      matches[has_match] + attr(matches, "match.length")[has_match] - 1
+    )
+  }
   out
 }
 
@@ -34,8 +71,14 @@ extract_donor <- function(x) {
   x <- as.character(x)
   matches <- regexpr("D[0-9]{5}", x, perl = TRUE)
   out <- rep(NA_character_, length(x))
-  has_match <- matches > 0
-  out[has_match] <- regmatches(x[has_match], matches[has_match])
+  has_match <- !is.na(matches) & matches > 0
+  if (any(has_match)) {
+    out[has_match] <- substring(
+      x[has_match],
+      matches[has_match],
+      matches[has_match] + attr(matches, "match.length")[has_match] - 1
+    )
+  }
   out
 }
 
@@ -86,6 +129,37 @@ copy_archr_group <- function(group_dir_name, target_subdir) {
   copy_bigwigs(paths, file.path(out_dir, target_subdir))
 }
 
+load_project_genome <- function(proj) {
+  genome <- tryCatch(proj@genome, error = function(e) NA_character_)
+  if (all(is.na(genome))) {
+    genome <- tryCatch(proj@genomeAnnotation$genome, error = function(e) NA_character_)
+  }
+  genome <- as.character(genome)[1]
+
+  if (is.na(genome) || !nzchar(genome)) {
+    message("Could not determine ArchR project genome package; continuing without explicit BSgenome load.")
+    return(invisible(FALSE))
+  }
+
+  genome_pkg <- genome
+  if (identical(genome, "hg38")) {
+    genome_pkg <- "BSgenome.Hsapiens.UCSC.hg38"
+  } else if (identical(genome, "hg19")) {
+    genome_pkg <- "BSgenome.Hsapiens.UCSC.hg19"
+  } else if (identical(genome, "mm10")) {
+    genome_pkg <- "BSgenome.Mmusculus.UCSC.mm10"
+  } else if (identical(genome, "mm9")) {
+    genome_pkg <- "BSgenome.Mmusculus.UCSC.mm9"
+  }
+
+  if (!grepl("^BSgenome\\.", genome_pkg)) {
+    message("ArchR project genome is not a BSgenome package name: ", genome)
+    return(invisible(FALSE))
+  }
+
+  load_bsgenome_object(genome_pkg)
+}
+
 message("Loading ArchRProject: ", archr_project_path)
 proj <- tryCatch(
   loadArchRProject(path = archr_project_path, showLogo = FALSE),
@@ -94,6 +168,7 @@ proj <- tryCatch(
     loadArchRProject(path = archr_project_path)
   }
 )
+load_project_genome(proj)
 
 clusters <- read.csv(cluster_csv, stringsAsFactors = FALSE)
 required_cols <- c("cell_id", "barcode", "sg_clusters")
