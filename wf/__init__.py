@@ -18,6 +18,7 @@ from wf.task import (
     finalize_task,
     glue_preprocess_task,
     glue_train_task,
+    peak2gene_task,
 )
 
 logging.basicConfig(
@@ -66,6 +67,15 @@ flow = [
         Params("min_frac_expressing"),
         Params("genes_of_interest"),
     ),
+    Section(
+        "Peak2Gene Links",
+        Text(
+            "Optionally provide an ArchRProject containing peaks to compute "
+            "ArchR Peak2Gene links using the RNA counts from the gene "
+            "expression data."
+        ),
+        Params("peak2gene_archr_project"),
+    ),
     Spoiler(
         "Advanced Options",
         Params("spatialglue_model_pickle")
@@ -97,6 +107,13 @@ metadata = LatchMetadata(
                 coverage tracks when an epigenomic tile AnnData is not \
                 supplied. If both are supplied, the tile AnnData coverage path \
                 is used.",
+            batch_table_column=True,
+        ),
+        "peak2gene_archr_project": LatchParameter(
+            display_name="Peak2Gene ArchRProject",
+            description="Optional ArchRProject directory containing peaks used \
+                to compute ArchR Peak2Gene links. RNA expression is taken from \
+                rna_glue.h5ad produced by this workflow.",
             batch_table_column=True,
         ),
         "wt_anndata": LatchParameter(
@@ -171,6 +188,7 @@ def glue_wf(
     ge_anndata: LatchFile,
     atac_anndata: Optional[LatchFile] = None,
     archr_project: Optional[LatchDir] = None,
+    peak2gene_archr_project: Optional[LatchDir] = None,
     spatialglue_model_pickle: Optional[LatchFile] = None,
     n_neighbors: int = 15,
     min_cluster_size: int = 200,
@@ -211,9 +229,17 @@ def glue_wf(
         genes_of_interest=genes_of_interest,
     )
 
+    peak2gene_results = peak2gene_task(
+        project_name=project_name,
+        results_dir=results,
+        peak2gene_archr_project=peak2gene_archr_project,
+        genes_of_interest=genes_of_interest,
+    )
+
     return finalize_task(
         results_dir=corr_results,
         coverage_dir=coverage_results,
+        peak2gene_dir=peak2gene_results,
     )
 
 

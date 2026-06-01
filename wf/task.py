@@ -20,6 +20,7 @@ import wf.correlation as corr
 from wf.coverage import export_archr_cluster_coverages, export_cluster_coverages
 import wf.genestats as gs
 from wf.markers import write_cluster_marker_outputs
+from wf.peak2gene import run_archr_peak2gene, write_peak2gene_skip
 import wf.plotting as pl
 import wf.utils as utils
 
@@ -316,10 +317,18 @@ def glue_train_task(
         )
 
     if final_raw_key is None or final_merged_key is None:
-        raise ValueError(
-            f"chosen_resolution={chosen_resolution} was not found in "
-            f"resolutions={resolutions}."
+        requested_resolution = chosen_resolution
+        final_raw_key = best_raw_key
+        final_merged_key = best_merged_key
+        chosen_resolution = best_resolution
+        warning = (
+            f"chosen_resolution={requested_resolution:g} was not found in "
+            f"resolutions={resolutions}. Falling back to resolution "
+            f"{chosen_resolution:g}, which had the best Moran's I="
+            f"{best_moran:.4f}."
         )
+        logging.warning(warning)
+        message(typ="warning", data={"title": "Resolution override not found", "body": warning})
 
     adata.obs["sg_clusters"] = adata.obs[final_merged_key].astype("category")
 
@@ -457,9 +466,55 @@ def coverage_task(
 def finalize_task(
     results_dir: LatchDir,
     coverage_dir: LatchDir,
+    peak2gene_dir: LatchDir,
 ) -> LatchDir:
     logging.info(f"Coverage outputs written to: {coverage_dir.remote_path}")
+    logging.info(f"Peak2Gene outputs written to: {peak2gene_dir.remote_path}")
     return results_dir
+
+
+@custom_task(cpu=8, memory=384, storage_gib=1000)
+def peak2gene_task(
+    project_name: str,
+    results_dir: LatchDir,
+    peak2gene_archr_project: Optional[LatchDir] = None,
+    genes_of_interest: Optional[str] = None,
+) -> LatchDir:
+    import scanpy as sc
+
+    out_dir = f"/root/{project_name}_peak2gene"
+    os.makedirs(out_dir, exist_ok=True)
+    remote_path = f"{results_dir.remote_path}/peak2gene"
+
+    if peak2gene_archr_project is None:
+        msg = (
+            "No Peak2Gene ArchRProject was provided, so Peak2Gene link "
+            "generation was skipped."
+        )
+        logging.info(msg)
+        write_peak2gene_skip(out_dir, msg)
+        return LatchDir(out_dir, remote_path)
+
+    try:
+        rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
+        logging.info("Reading clustered RNA AnnData for Peak2Gene export...")
+        rna = sc.read_h5ad(rna_path)
+        run_archr_peak2gene(
+            out_dir=out_dir,
+            archr_project_path=peak2gene_archr_project.local_path,
+            rna=rna,
+            genes_of_interest=genes_of_interest,
+        )
+    except Exception as e:
+        msg = (
+            "Peak2Gene link generation failed and was skipped. "
+            f"Reason: {e}"
+        )
+        logging.exception(msg)
+        message(typ="warning", data={"title": "Peak2Gene skipped", "body": msg})
+        write_peak2gene_skip(out_dir, msg)
+
+    return LatchDir(out_dir, remote_path)
 
 
 @custom_task(cpu=8, memory=384, storage_gib=1000)

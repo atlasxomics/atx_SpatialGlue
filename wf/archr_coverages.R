@@ -160,12 +160,61 @@ load_project_genome <- function(proj) {
   load_bsgenome_object(genome_pkg)
 }
 
+strip_stale_group_coverages <- function(project_path) {
+  rds_path <- file.path(project_path, "Save-ArchR-Project.rds")
+  if (!file.exists(rds_path)) {
+    return(invisible(FALSE))
+  }
+
+  proj_rds <- readRDS(rds_path)
+  group_coverages <- tryCatch(
+    proj_rds@projectMetadata$GroupCoverages,
+    error = function(e) NULL
+  )
+  if (is.null(group_coverages) || length(group_coverages) == 0) {
+    return(invisible(FALSE))
+  }
+
+  old_output_dir <- tryCatch(
+    as.character(proj_rds@projectMetadata$outputDirectory)[1],
+    error = function(e) NA_character_
+  )
+  new_output_dir <- normalizePath(project_path, mustWork = TRUE)
+  missing_files <- character()
+
+  for (z in seq_along(group_coverages)) {
+    zdata <- group_coverages[[z]]$coverageMetadata
+    if (is.null(zdata) || !"File" %in% colnames(zdata)) {
+      next
+    }
+    zfiles <- as.character(zdata$File)
+    if (!is.na(old_output_dir) && nzchar(old_output_dir)) {
+      zfiles <- gsub(old_output_dir, new_output_dir, zfiles, fixed = TRUE)
+    }
+    missing_files <- c(missing_files, zfiles[!file.exists(zfiles)])
+  }
+
+  if (length(missing_files) == 0) {
+    return(invisible(FALSE))
+  }
+
+  message(
+    "Removing stale ArchR GroupCoverages metadata before loading project; ",
+    length(unique(missing_files)),
+    " saved coverage files are absent from the downloaded project."
+  )
+  proj_rds@projectMetadata$GroupCoverages <- S4Vectors::SimpleList()
+  saveRDS(proj_rds, rds_path)
+  invisible(TRUE)
+}
+
 message("Loading ArchRProject: ", archr_project_path)
+strip_stale_group_coverages(archr_project_path)
 proj <- tryCatch(
-  loadArchRProject(path = archr_project_path, showLogo = FALSE),
+  loadArchRProject(path = archr_project_path, force = TRUE, showLogo = FALSE),
   error = function(e) {
     message("Retrying loadArchRProject without showLogo argument: ", conditionMessage(e))
-    loadArchRProject(path = archr_project_path)
+    loadArchRProject(path = archr_project_path, force = TRUE)
   }
 )
 load_project_genome(proj)

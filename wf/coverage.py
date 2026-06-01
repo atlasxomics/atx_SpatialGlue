@@ -20,6 +20,20 @@ def _extract_barcode(value: str) -> Optional[str]:
     return match.group(1)
 
 
+def resolve_rscript() -> str:
+    rscript = os.environ.get("ARCHR_RSCRIPT")
+    if not rscript:
+        if os.path.exists("/usr/local/bin/Rscript"):
+            rscript = "/usr/local/bin/Rscript"
+        elif os.path.exists("/usr/bin/Rscript"):
+            rscript = "/usr/bin/Rscript"
+        else:
+            rscript = "Rscript"
+    if os.path.sep not in rscript and shutil.which(rscript) is None:
+        raise RuntimeError(f"Could not find Rscript executable: {rscript}")
+    return rscript
+
+
 def candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list[str]:
     exclude = exclude or set()
     candidates = []
@@ -149,16 +163,7 @@ def export_archr_cluster_coverages(
     if not os.path.exists(script_path):
         raise RuntimeError(f"Missing ArchR coverage helper script: {script_path}")
 
-    rscript = os.environ.get("ARCHR_RSCRIPT")
-    if not rscript:
-        if os.path.exists("/usr/local/bin/Rscript"):
-            rscript = "/usr/local/bin/Rscript"
-        elif os.path.exists("/usr/bin/Rscript"):
-            rscript = "/usr/bin/Rscript"
-        else:
-            rscript = "Rscript"
-    if os.path.sep not in rscript and shutil.which(rscript) is None:
-        raise RuntimeError(f"Could not find Rscript executable: {rscript}")
+    rscript = resolve_rscript()
 
     subprocess.run(
         [
