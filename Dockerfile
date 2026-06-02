@@ -122,6 +122,10 @@ copy renv/settings.json /root/renv/settings.json
 workdir /root
 run /usr/local/bin/R -e "renv::restore()" && \
     /usr/local/bin/Rscript -e "library(ArchR); cat('ArchR ', as.character(packageVersion('ArchR')), '\n', sep = '')"
+
+run /usr/local/bin/Rscript -e "BiocManager::install('BSgenome.Mmusculus.UCSC.mm39', ask = FALSE, update = FALSE)" && \
+    /usr/local/bin/Rscript -e "library(BSgenome.Mmusculus.UCSC.mm39); cat('BSgenome.Mmusculus.UCSC.mm39 loaded\n')"
+
 workdir /tmp/docker-build/work/
 
 # Install latch (pyflyte) inside the conda env so serialization sees workflow deps

@@ -20,6 +20,15 @@ load_bsgenome_object <- function(genome_pkg) {
     return(invisible(FALSE))
   }
 
+  if (!requireNamespace(genome_pkg, quietly = TRUE)) {
+    warning(
+      "BSgenome package is not installed: ",
+      genome_pkg,
+      ". Continuing without explicit BSgenome registration."
+    )
+    return(invisible(FALSE))
+  }
+
   message("Loading BSgenome package: ", genome_pkg)
   suppressPackageStartupMessages(
     library(genome_pkg, character.only = TRUE)
@@ -39,6 +48,7 @@ load_bsgenome_object <- function(genome_pkg) {
 for (genome_pkg in c(
   "BSgenome.Hsapiens.UCSC.hg38",
   "BSgenome.Mmusculus.UCSC.mm10",
+  "BSgenome.Mmusculus.UCSC.mm39",
   "BSgenome.Rnorvegicus.UCSC.rn6"
 )) {
   if (requireNamespace(genome_pkg, quietly = TRUE)) {
@@ -148,6 +158,8 @@ load_project_genome <- function(proj) {
     genome_pkg <- "BSgenome.Hsapiens.UCSC.hg19"
   } else if (identical(genome, "mm10")) {
     genome_pkg <- "BSgenome.Mmusculus.UCSC.mm10"
+  } else if (identical(genome, "mm39")) {
+    genome_pkg <- "BSgenome.Mmusculus.UCSC.mm39"
   } else if (identical(genome, "mm9")) {
     genome_pkg <- "BSgenome.Mmusculus.UCSC.mm9"
   }
