@@ -475,12 +475,16 @@ def finalize_task(
 
 @custom_task(cpu=8, memory=384, storage_gib=1000)
 def peak2gene_task(
-    project_name: str,
     results_dir: LatchDir,
+    project_name: Optional[str] = None,
     peak2gene_archr_project: Optional[LatchDir] = None,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
     import scanpy as sc
+
+    if project_name is None or str(project_name).strip() == "":
+        project_name = os.path.basename(results_dir.remote_path.rstrip("/"))
+    project_name = utils.safe_name(project_name or "peak2gene")
 
     out_dir = f"/root/{project_name}_peak2gene"
     os.makedirs(out_dir, exist_ok=True)
