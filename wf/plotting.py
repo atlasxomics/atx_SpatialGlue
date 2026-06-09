@@ -409,6 +409,145 @@ def sample_labels(adata):
     return np.repeat("all", adata.n_obs)
 
 
+def _cluster_color_map(labels) -> dict[str, object]:
+    categories = sorted(set(pd.Index(labels).astype(str)), key=utils.cluster_sort_key)
+    cmap = plt.get_cmap("tab20")
+    n_colors = max(len(categories), 1)
+    return {
+        label: cmap(i % cmap.N / max(min(n_colors, cmap.N) - 1, 1))
+        for i, label in enumerate(categories)
+    }
+
+
+def _scatter_clusters(
+    ax,
+    coords,
+    labels,
+    title: str,
+    color_map: dict[str, object],
+    point_size: float,
+    invert_y: bool = False,
+    show_legend: bool = True,
+) -> None:
+    labels = pd.Index(labels).astype(str).to_numpy()
+    colors = [color_map[label] for label in labels]
+    ax.scatter(
+        coords[:, 0],
+        coords[:, 1],
+        c=colors,
+        s=point_size,
+        linewidths=0,
+    )
+    ax.set_title(title, fontsize=9)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    if invert_y:
+        ax.set_aspect("equal")
+        ax.invert_yaxis()
+
+    if show_legend:
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color,
+                markersize=5,
+                label=str(label),
+            )
+            for label, color in color_map.items()
+        ]
+        ax.legend(
+            handles=handles,
+            title="cluster",
+            fontsize=6,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+        )
+
+
+def write_cluster_resolution_plots(out_dir: str, adata, cluster_keys: list[str]) -> None:
+    """Write UMAP and spatial cluster plots for each clustering label column."""
+    keys = []
+    for key in cluster_keys:
+        if key in adata.obs.columns and key not in keys:
+            keys.append(key)
+    if not keys:
+        logging.warning("No cluster label columns found; skipping resolution plots.")
+        return
+
+    if "X_umap" not in adata.obsm:
+        logging.warning("No UMAP embedding found; skipping resolution UMAP plots.")
+    else:
+        umap = np.asarray(adata.obsm["X_umap"])
+        for key in keys:
+            labels = adata.obs[key].astype(str).values
+            color_map = _cluster_color_map(labels)
+            fig, ax = plt.subplots(figsize=(6.5, 5.5))
+            _scatter_clusters(
+                ax,
+                umap,
+                labels,
+                f"SpatialGlue UMAP: {key}",
+                color_map,
+                utils.SCANPY_CLUSTER_POINT_SIZE,
+                show_legend=True,
+            )
+            ax.set_xlabel("UMAP1")
+            ax.set_ylabel("UMAP2")
+            fig.tight_layout()
+            fig.savefig(
+                utils.fig_path(out_dir, f"clustering/umap_{utils.safe_name(key)}.png"),
+                dpi=200,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
+
+    if "spatial" not in adata.obsm:
+        logging.warning("No spatial coordinates found; skipping resolution spatial plots.")
+        return
+
+    coords = np.asarray(adata.obsm["spatial"])
+    sample_values = sample_labels(adata)
+    samples = sorted(set(sample_values))
+    ncols = min(4, len(samples))
+    nrows = int(np.ceil(len(samples) / ncols))
+
+    for key in keys:
+        labels = adata.obs[key].astype(str).values
+        color_map = _cluster_color_map(labels)
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(4.5 * ncols, 4.5 * nrows),
+            squeeze=False,
+        )
+        axes = axes.ravel()
+        for i, sample in enumerate(samples):
+            mask = sample_values == sample
+            _scatter_clusters(
+                axes[i],
+                coords[mask],
+                labels[mask],
+                f"{sample}: {key}",
+                color_map,
+                utils.SPATIAL_SCATTER_POINT_SIZE,
+                invert_y=True,
+                show_legend=(i == 0),
+            )
+        for ax in axes[len(samples):]:
+            ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(
+            utils.fig_path(out_dir, f"clustering/spatial_{utils.safe_name(key)}.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig)
+
+
 def selected_report_genes(
     genes_of_interest: Optional[str],
     gene_names,

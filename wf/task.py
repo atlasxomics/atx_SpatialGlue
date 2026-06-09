@@ -339,6 +339,11 @@ def glue_train_task(
     # -------------------- Plots --------------------
     logging.info("Plotting figures...")
     sc.settings.figdir = figures_dir
+    cluster_result_keys = []
+    for row in sweep_rows:
+        cluster_result_keys.extend([row["raw_key"], row["merged_key"]])
+    cluster_result_keys.append("sg_clusters")
+    pl.write_cluster_resolution_plots(out_dir, adata, cluster_result_keys)
     sc.pl.umap(
         adata,
         color=["sg_clusters"],
@@ -355,9 +360,10 @@ def glue_train_task(
         for old_key in ["sg_leiden", "sg_leiden_merged", "sg_merged_leiden"]:
             if old_key in obj.obs.columns:
                 del obj.obs[old_key]
-        obj.obs["sg_clusters"] = adata.obs.loc[
-            obj.obs_names, "sg_clusters"
-        ].values
+        for key in cluster_result_keys:
+            if key in adata.obs.columns:
+                obj.obs[key] = adata.obs.loc[obj.obs_names, key].astype(str).values
+                obj.obs[key] = obj.obs[key].astype("category")
 
     for obj in [rna_result, ge_result]:
         obj.obsm["SpatialGlue"] = adata.obsm["SpatialGlue"]
