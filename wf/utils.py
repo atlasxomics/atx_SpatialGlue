@@ -345,6 +345,16 @@ N_COMPONENTS = 50
 SEED = 42
 SCANPY_CLUSTER_POINT_SIZE = 0.5
 SPATIAL_SCATTER_POINT_SIZE = 2.5
+PLOTTING_EMBEDDING_KEYS = (
+    "SpatialGlue",
+    "X_pca",
+    "X_stagate",
+    "adj_feature",
+    "alpha",
+    "alpha_omics1",
+    "alpha_omics2",
+    "feat",
+)
 
 
 def figures_dir(out_dir: str) -> str:
@@ -375,6 +385,77 @@ def table_path(out_dir: str, filename: str) -> str:
 def safe_name(name: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
     return safe or "labels"
+
+
+def strip_plotting_embeddings(adata) -> None:
+    """Remove large intermediate embeddings that are not needed for plotting."""
+    for key in PLOTTING_EMBEDDING_KEYS:
+        if key in adata.obsm:
+            del adata.obsm[key]
+        if key in adata.obsp:
+            del adata.obsp[key]
+        if key in adata.uns:
+            del adata.uns[key]
+
+
+def make_plotting_anndata(adata, matrix_dtype=np.float32):
+    """Return a reduced AnnData for notebook/plotting use."""
+    out = adata.copy()
+
+    obs_cols = [
+        "barcode",
+        "n_genes_by_counts",
+        "log1p_n_genes_by_counts",
+        "total_counts",
+        "log1p_total_counts",
+        "pct_counts_in_top_50_genes",
+        "pct_counts_in_top_100_genes",
+        "pct_counts_in_top_200_genes",
+        "pct_counts_in_top_500_genes",
+        "total_counts_mt",
+        "log1p_total_counts_mt",
+        "pct_counts_mt",
+    ]
+    var_cols = [
+        "mt",
+        "n_counts",
+        "n_cells",
+        "n_cells_by_counts",
+        "mean_counts",
+        "log1p_mean_counts",
+        "pct_dropout_by_counts",
+        "total_counts",
+        "log1p_total_counts",
+        "means",
+        "dispersions",
+        "dispersions_norm",
+    ]
+
+    out.obs.drop([c for c in obs_cols if c in out.obs.columns], axis=1, inplace=True)
+    out.var.drop([c for c in var_cols if c in out.var.columns], axis=1, inplace=True)
+    out.varm.clear()
+    out.layers.clear()
+    out.raw = None
+
+    for key in ["pca", "log1p"]:
+        out.uns.pop(key, None)
+
+    keep_obsm = {"spatial", "X_umap"}
+    for key in list(out.obsm.keys()):
+        if key not in keep_obsm:
+            del out.obsm[key]
+    for key in PLOTTING_EMBEDDING_KEYS:
+        if key in out.obsp:
+            del out.obsp[key]
+        if key in out.uns:
+            del out.uns[key]
+
+    if sparse.issparse(out.X):
+        out.X = out.X.astype(matrix_dtype)
+    else:
+        out.X = np.asarray(out.X, dtype=matrix_dtype)
+
+    return out
 
 
 def save_fig_page(fig, out_dir: str, filename: str, page_idx: int) -> None:

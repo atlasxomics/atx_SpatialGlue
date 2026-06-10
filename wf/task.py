@@ -400,12 +400,19 @@ def glue_train_task(
             message(typ="warning", data={"title": warning, "body": warning})
 
     logging.info("Writing data...")
+    for obj in result_objects:
+        utils.strip_plotting_embeddings(obj)
+
     if atac_tiles_matched is not None:
         atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
+    ge_plotting = utils.make_plotting_anndata(ge_result, matrix_dtype=np.float16)
+    ge_plotting.write(f"{out_dir}/ge_glue_sm.h5ad")
     ge_result.write(f"{out_dir}/ge_glue.h5ad")
     rna_result.write(f"{out_dir}/rna_glue.h5ad")
     pd.DataFrame([{
         "has_atac_tiles": bool(atac_tiles_matched is not None),
+        "ge_full_h5ad": "ge_glue.h5ad",
+        "ge_plotting_h5ad": "ge_glue_sm.h5ad",
     }]).to_csv(f"{out_dir}/coverage_manifest.csv", index=False)
 
     with open(f"{out_dir}/SpatialGlue_model.pickle", "wb") as f:
