@@ -405,7 +405,9 @@ def glue_train_task(
 
     if atac_tiles_matched is not None:
         atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
-    ge_plotting = utils.make_plotting_anndata(ge_result, matrix_dtype=np.float16)
+    ge_plotting = utils.make_plotting_anndata(
+        ge_result, matrix_dtype=np.float16, force_dense=True
+    )
     ge_plotting.write(f"{out_dir}/ge_glue_sm.h5ad")
     ge_result.write(f"{out_dir}/ge_glue.h5ad")
     rna_result.write(f"{out_dir}/rna_glue.h5ad")

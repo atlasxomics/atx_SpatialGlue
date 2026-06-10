@@ -398,7 +398,7 @@ def strip_plotting_embeddings(adata) -> None:
             del adata.uns[key]
 
 
-def make_plotting_anndata(adata, matrix_dtype=np.float32):
+def make_plotting_anndata(adata, matrix_dtype=np.float32, force_dense: bool = False):
     """Return a reduced AnnData for notebook/plotting use."""
     out = adata.copy()
 
@@ -451,7 +451,7 @@ def make_plotting_anndata(adata, matrix_dtype=np.float32):
             del out.uns[key]
 
     if sparse.issparse(out.X):
-        out.X = out.X.astype(matrix_dtype)
+        out.X = out.X.toarray().astype(matrix_dtype) if force_dense else out.X.astype(matrix_dtype)
     else:
         out.X = np.asarray(out.X, dtype=matrix_dtype)
 
