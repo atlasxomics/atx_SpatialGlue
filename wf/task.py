@@ -31,9 +31,7 @@ logging.basicConfig(
 )
 
 
-
-
-@custom_task(cpu=4, memory=384, storage_gib=1000)
+@custom_task(cpu=4, memory=576, storage_gib=1000)
 def glue_preprocess_task(
     project_name: str,
     wt_anndata: LatchFile,
@@ -130,7 +128,7 @@ def glue_preprocess_task(
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}/preprocess")
 
 
-@custom_task(cpu=64, memory=384, storage_gib=1000)
+@custom_task(cpu=64, memory=576, storage_gib=1000)
 def glue_train_task(
     project_name: str,
     prepared_dir: LatchDir,
@@ -532,7 +530,7 @@ def peak2gene_task(
     return LatchDir(out_dir, remote_path)
 
 
-@custom_task(cpu=8, memory=384, storage_gib=1000)
+@custom_task(cpu=8, memory=576, storage_gib=1000)
 def corr_task(
     project_name: str,
     results_dir: LatchDir,
