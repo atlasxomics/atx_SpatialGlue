@@ -494,8 +494,8 @@ def order_plotting_obs_columns(adata) -> None:
     front_cols = [
         "sample",
         "condition",
-        "CoPro clusters",
-        "WT_cluster",
+        "CoPro_cluster",
+        "RNA_cluster",
         "ATAC_cluster",
     ]
     ordered = [c for c in front_cols if c in adata.obs.columns]

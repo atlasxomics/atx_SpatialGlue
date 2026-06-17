@@ -390,7 +390,7 @@ seRNA <- SummarizedExperiment(
   rowRanges = gene_set[gene_idx[keep_gene]]
 )
 
-message("Adding RNA GeneExpressionMatrix from rna_glue.h5ad counts")
+message("Adding RNA GeneExpressionMatrix from rna_copro.h5ad counts")
 proj <- addGeneExpressionMatrix(
   input = proj,
   seRNA = seRNA,

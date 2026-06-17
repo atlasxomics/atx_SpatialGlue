@@ -113,7 +113,7 @@ metadata = LatchMetadata(
             display_name="Peak2Gene ArchRProject",
             description="Optional ArchRProject directory containing peaks used \
                 to compute ArchR Peak2Gene links. RNA expression is taken from \
-                rna_glue.h5ad produced by this workflow.",
+                rna_copro.h5ad produced by this workflow.",
             batch_table_column=True,
         ),
         "wt_anndata": LatchParameter(

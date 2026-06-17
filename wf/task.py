@@ -402,7 +402,7 @@ def glue_train_task(
         utils.strip_plotting_embeddings(obj)
 
     if atac_tiles_matched is not None:
-        atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
+        atac_tiles_matched.write(f"{out_dir}/atac_tiles_copro.h5ad")
     plotting_categorical_obs_keep = {
         "sample",
         "condition",
@@ -418,7 +418,7 @@ def glue_train_task(
         categorical_obs_keep=plotting_categorical_obs_keep,
         obs_drop=plotting_obs_drop,
         obs_rename={
-            "sg_clusters": "CoPro clusters",
+            "sg_clusters": "CoPro_cluster",
             "cluster": "ATAC_cluster",
         },
     )
@@ -428,8 +428,8 @@ def glue_train_task(
         categorical_obs_keep=plotting_categorical_obs_keep,
         obs_drop=plotting_obs_drop,
         obs_rename={
-            "sg_clusters": "CoPro clusters",
-            "cluster": "WT_cluster",
+            "sg_clusters": "CoPro_cluster",
+            "cluster": "RNA_cluster",
         },
         x_priority=["counts", "raw", "X"],
     )
@@ -437,23 +437,24 @@ def glue_train_task(
         rna_plotting.obs["ATAC_cluster"] = ge_plotting.obs.loc[
             rna_plotting.obs_names, "ATAC_cluster"
         ].values
-    if "WT_cluster" in rna_plotting.obs.columns:
-        ge_plotting.obs["WT_cluster"] = rna_plotting.obs.loc[
-            ge_plotting.obs_names, "WT_cluster"
+    if "RNA_cluster" in rna_plotting.obs.columns:
+        ge_plotting.obs["RNA_cluster"] = rna_plotting.obs.loc[
+            ge_plotting.obs_names, "RNA_cluster"
         ].values
     utils.order_plotting_obs_columns(ge_plotting)
     utils.order_plotting_obs_columns(rna_plotting)
 
-    ge_plotting.write(f"{out_dir}/ge_glue_sm.h5ad")
-    rna_plotting.write(f"{out_dir}/rna_glue_sm.h5ad")
-    ge_result.write(f"{out_dir}/ge_glue.h5ad")
-    rna_result.write(f"{out_dir}/rna_glue.h5ad")
+    ge_plotting.write(f"{out_dir}/atac_gs_copro_sm.h5ad")
+    rna_plotting.write(f"{out_dir}/rna_copro_sm.h5ad")
+    ge_result.write(f"{out_dir}/atac_gs_copro.h5ad")
+    rna_result.write(f"{out_dir}/rna_copro.h5ad")
     pd.DataFrame([{
         "has_atac_tiles": bool(atac_tiles_matched is not None),
-        "rna_full_h5ad": "rna_glue.h5ad",
-        "rna_plotting_h5ad": "rna_glue_sm.h5ad",
-        "ge_full_h5ad": "ge_glue.h5ad",
-        "ge_plotting_h5ad": "ge_glue_sm.h5ad",
+        "rna_full_h5ad": "rna_copro.h5ad",
+        "rna_plotting_h5ad": "rna_copro_sm.h5ad",
+        "ge_full_h5ad": "atac_gs_copro.h5ad",
+        "ge_plotting_h5ad": "atac_gs_copro_sm.h5ad",
+        "atac_tiles_full_h5ad": "atac_tiles_copro.h5ad",
     }]).to_csv(f"{out_dir}/coverage_manifest.csv", index=False)
 
     with open(f"{out_dir}/SpatialGlue_model.pickle", "wb") as f:
@@ -491,7 +492,7 @@ def coverage_task(
             f.write(f"{msg}\n")
         return LatchDir(out_dir, f"{results_dir.remote_path}/coverages")
 
-    rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
+    rna_path = LatchFile(f"{results_dir.remote_path}/rna_copro.h5ad").local_path
     logging.info("Reading clustered RNA AnnData for coverage export...")
     rna = sc.read_h5ad(rna_path)
 
@@ -505,7 +506,7 @@ def coverage_task(
             message(typ="warning", data={"title": "Coverage source", "body": msg})
 
         logging.info("Downloading clustered ATAC AnnData for coverage export...")
-        atac_path = LatchFile(f"{results_dir.remote_path}/atac_glue.h5ad").local_path
+        atac_path = LatchFile(f"{results_dir.remote_path}/atac_tiles_copro.h5ad").local_path
         logging.info("Reading clustered ATAC AnnData object...")
         atac = sc.read_h5ad(atac_path)
         export_cluster_coverages(out_dir, atac, rna)
@@ -564,7 +565,7 @@ def peak2gene_task(
         return LatchDir(out_dir, remote_path)
 
     try:
-        rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
+        rna_path = LatchFile(f"{results_dir.remote_path}/rna_copro.h5ad").local_path
         logging.info("Reading clustered RNA AnnData for Peak2Gene export...")
         rna = sc.read_h5ad(rna_path)
         run_archr_peak2gene(
@@ -601,7 +602,7 @@ def corr_task(
     # Download and read data -----------------------------------------------
     logging.info("Downloading RNA data...")
     # Add check if exists on latch
-    rna_path = LatchFile(f"{results_dir.remote_path}/rna_glue.h5ad").local_path
+    rna_path = LatchFile(f"{results_dir.remote_path}/rna_copro.h5ad").local_path
 
     logging.info("Downloading Gene Accessibility data...")
     ge_path = ge_anndata.local_path

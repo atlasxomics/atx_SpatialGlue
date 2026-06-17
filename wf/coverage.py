@@ -106,7 +106,7 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
             suffix=f"_{safe_col}.bw",
         )
 
-    glue_dir = os.path.join(out_dir, "glue_cluster_coverages")
+    glue_dir = os.path.join(out_dir, "CoPro_cluster_coverages")
     export_coverage_group(
         atac,
         groupby="sg_clusters",
@@ -117,7 +117,7 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
     reserved = {"sg_clusters", "sg_leiden", "sg_leiden_merged"}
     rna_cluster_cols = candidate_cluster_columns(rna, exclude=reserved)
     if rna_cluster_cols:
-        rna_dir = os.path.join(out_dir, "rna_cluster_coverages")
+        rna_dir = os.path.join(out_dir, "RNA_cluster_coverages")
         for col in rna_cluster_cols:
             safe_col = utils.safe_name(col)
             groupby = f"rna_{safe_col}"
@@ -137,7 +137,7 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
         col for col in atac_cluster_cols if not str(col).startswith("rna_")
     ]
     if atac_cluster_cols:
-        atac_dir = os.path.join(out_dir, "atac_cluster_coverages")
+        atac_dir = os.path.join(out_dir, "ATAC_cluster_coverages")
         for col in atac_cluster_cols:
             safe_col = utils.safe_name(col)
             logging.info(f"Exporting ATAC cluster coverage tracks for '{col}'.")

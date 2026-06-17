@@ -368,7 +368,7 @@ for (col in metadata_cols) {
 }
 
 metadata_targets <- list(
-  sg_clusters = "glue_cluster_coverages",
+  sg_clusters = "CoPro_cluster_coverages",
   sample = "sample_coverages",
   condition = "condition_coverages"
 )
@@ -376,7 +376,7 @@ for (col in valid_metadata_cols) {
   if (col %in% names(metadata_targets)) {
     target_subdir <- metadata_targets[[col]]
   } else if (grepl("^rna_", col)) {
-    target_subdir <- file.path("rna_cluster_coverages", sub("^rna_", "", col))
+    target_subdir <- file.path("RNA_cluster_coverages", sub("^rna_", "", col))
   } else {
     target_subdir <- file.path("metadata_coverages", safe_name(col))
   }
@@ -394,7 +394,7 @@ if (length(atac_cluster_cols) > 0) {
     proj <- export_archr_group_bigwigs(
       proj,
       group_by = col,
-      target_subdir = file.path("atac_cluster_coverages", safe_name(col)),
+      target_subdir = file.path("ATAC_cluster_coverages", safe_name(col)),
       required = FALSE
     )
   }
@@ -406,7 +406,7 @@ if (!"sample" %in% valid_metadata_cols) {
   copy_archr_group("Sample", "sample_coverages")
 }
 if (!"Clusters" %in% atac_cluster_cols) {
-  copy_archr_group("Clusters", file.path("atac_cluster_coverages", "Clusters"))
+  copy_archr_group("Clusters", file.path("ATAC_cluster_coverages", "Clusters"))
 }
 
 message("ArchR coverage export complete.")
