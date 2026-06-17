@@ -403,10 +403,20 @@ def glue_train_task(
 
     if atac_tiles_matched is not None:
         atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
+    plotting_categorical_obs_keep = {
+        "sample",
+        "condition",
+        "cluster",
+        "sg_cluster",
+        "sg_clusters",
+    }
+    plotting_obs_drop = {"on_off", "row", "col", "xcor", "ycor", "sample_name"}
     ge_plotting = utils.make_plotting_anndata(
         ge_result,
         matrix_dtype=np.float16,
         force_dense=True,
+        categorical_obs_keep=plotting_categorical_obs_keep,
+        obs_drop=plotting_obs_drop,
         obs_rename={
             "sg_clusters": "CoPro clusters",
             "cluster": "ATAC_cluster",
@@ -415,14 +425,8 @@ def glue_train_task(
     rna_plotting = utils.make_plotting_anndata(
         rna_result,
         matrix_dtype=np.float16,
-        categorical_obs_keep={
-            "sample",
-            "condition",
-            "cluster",
-            "sg_cluster",
-            "sg_clusters",
-        },
-        obs_drop={"on_off", "row", "col", "xcor", "ycor"},
+        categorical_obs_keep=plotting_categorical_obs_keep,
+        obs_drop=plotting_obs_drop,
         obs_rename={
             "sg_clusters": "CoPro clusters",
             "cluster": "WT_cluster",
