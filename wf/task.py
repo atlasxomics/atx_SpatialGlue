@@ -467,7 +467,7 @@ def glue_train_task(
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
 
 
-@custom_task(cpu=8, memory=384, storage_gib=1000)
+@custom_task(cpu=8, memory=192, storage_gib=1000)
 def coverage_task(
     project_name: str,
     results_dir: LatchDir,
@@ -542,7 +542,7 @@ def finalize_task(
     return results_dir
 
 
-@custom_task(cpu=8, memory=384, storage_gib=1000)
+@custom_task(cpu=8, memory=64, storage_gib=1000)
 def peak2gene_task(
     project_name: str,
     results_dir: LatchDir,
@@ -586,7 +586,7 @@ def peak2gene_task(
     return LatchDir(out_dir, remote_path)
 
 
-@custom_task(cpu=8, memory=576, storage_gib=1000)
+@custom_task(cpu=8, memory=384, storage_gib=1000)
 def corr_task(
     project_name: str,
     results_dir: LatchDir,
