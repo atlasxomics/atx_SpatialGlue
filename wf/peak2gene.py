@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import tempfile
 from typing import Optional
 
 import numpy as np
@@ -105,34 +106,35 @@ def run_archr_peak2gene(
     genes_of_interest: Optional[str] = None,
 ) -> None:
     logging.info("Preparing RNA count matrix for ArchR Peak2Gene...")
-    input_paths = export_peak2gene_inputs(out_dir, rna, genes_of_interest)
+    with tempfile.TemporaryDirectory(prefix="peak2gene_inputs_") as input_dir:
+        input_paths = export_peak2gene_inputs(input_dir, rna, genes_of_interest)
 
-    script_path = os.path.join(os.path.dirname(__file__), "archr_peak2gene.R")
-    if not os.path.exists(script_path):
-        raise RuntimeError(f"Missing ArchR Peak2Gene helper script: {script_path}")
+        script_path = os.path.join(os.path.dirname(__file__), "archr_peak2gene.R")
+        if not os.path.exists(script_path):
+            raise RuntimeError(f"Missing ArchR Peak2Gene helper script: {script_path}")
 
-    rscript = resolve_rscript()
-    subprocess.run(
-        [
-            rscript,
-            "-e",
-            "library(ArchR); cat('Using ArchR ', as.character(packageVersion('ArchR')), '\\n', sep = '')",
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            rscript,
-            script_path,
-            archr_project_path,
-            input_paths["counts"],
-            input_paths["cells"],
-            input_paths["genes"],
-            out_dir,
-            input_paths["genes_of_interest"],
-        ],
-        check=True,
-    )
+        rscript = resolve_rscript()
+        subprocess.run(
+            [
+                rscript,
+                "-e",
+                "library(ArchR); cat('Using ArchR ', as.character(packageVersion('ArchR')), '\\n', sep = '')",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                rscript,
+                script_path,
+                archr_project_path,
+                input_paths["counts"],
+                input_paths["cells"],
+                input_paths["genes"],
+                out_dir,
+                input_paths["genes_of_interest"],
+            ],
+            check=True,
+        )
 
 
 def write_peak2gene_skip(out_dir: str, reason: str) -> None:
