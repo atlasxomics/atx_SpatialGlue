@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from typing import TYPE_CHECKING, Optional
@@ -398,7 +399,118 @@ def strip_plotting_embeddings(adata) -> None:
             del adata.uns[key]
 
 
-def make_plotting_anndata(adata, matrix_dtype=np.float32, force_dense: bool = False):
+def add_spatial_offset(
+    adata,
+    sample_key: str = "sample",
+    spatial_key: str = "spatial",
+    new_obsm_key: str = "spatial_offset",
+    tile_spacing: float = 300.0,
+) -> None:
+    if (
+        sample_key not in adata.obs
+        or spatial_key not in adata.obsm
+        or new_obsm_key in adata.obsm
+    ):
+        return
+
+    sample_values = adata.obs[sample_key].astype(str)
+    samples = sorted(sample_values.unique().tolist())
+    n_samples = len(samples)
+    if n_samples == 0:
+        return
+
+    n_cols = min(2, max(1, n_samples))
+    n_rows = math.ceil(n_samples / n_cols)
+    spatial = np.asarray(adata.obsm[spatial_key])
+    X_new = np.empty_like(spatial, dtype=float)
+    grid_bounds = {}
+    sample_positions = {}
+
+    for idx, sample_name in enumerate(samples):
+        row = idx // n_cols
+        col = idx % n_cols
+        sample_positions[sample_name] = (row, col)
+
+        mask = (sample_values == str(sample_name)).to_numpy()
+        xspa = spatial[mask]
+        if xspa.size == 0:
+            continue
+
+        l_max = xspa.max(axis=0)
+        l_min = xspa.min(axis=0)
+        grid_bounds[(row, col)] = {
+            "width": float(l_max[0] - l_min[0]),
+            "height": float(l_max[1] - l_min[1]),
+            "min_x": float(l_min[0]),
+            "max_y": float(l_max[1]),
+        }
+
+    row_heights = [
+        max(
+            (
+                grid_bounds[(r, c)]["height"]
+                for c in range(n_cols)
+                if (r, c) in grid_bounds
+            ),
+            default=0.0,
+        )
+        for r in range(n_rows)
+    ]
+    col_widths = [
+        max(
+            (
+                grid_bounds[(r, c)]["width"]
+                for r in range(n_rows)
+                if (r, c) in grid_bounds
+            ),
+            default=0.0,
+        )
+        for c in range(n_cols)
+    ]
+
+    row_y_offsets = [0.0]
+    for i in range(n_rows - 1):
+        row_y_offsets.append(row_y_offsets[-1] - row_heights[i] - tile_spacing)
+
+    col_x_offsets = [0.0]
+    for i in range(n_cols - 1):
+        col_x_offsets.append(col_x_offsets[-1] + col_widths[i] + tile_spacing)
+
+    for sample_name in samples:
+        row, col = sample_positions[sample_name]
+        bounds = grid_bounds.get((row, col))
+        if bounds is None:
+            continue
+        mask = (sample_values == str(sample_name)).to_numpy()
+        xspa = spatial[mask].copy().astype(float)
+        xspa[:, 0] += col_x_offsets[col] - bounds["min_x"]
+        xspa[:, 1] += row_y_offsets[row] - bounds["max_y"]
+        X_new[mask] = xspa
+
+    adata.obsm[new_obsm_key] = X_new
+
+
+def order_plotting_obs_columns(adata) -> None:
+    front_cols = [
+        "sample",
+        "condition",
+        "CoPro clusters",
+        "WT_cluster",
+        "ATAC_cluster",
+    ]
+    ordered = [c for c in front_cols if c in adata.obs.columns]
+    ordered.extend([c for c in adata.obs.columns if c not in ordered])
+    adata.obs = adata.obs.loc[:, ordered]
+
+
+def make_plotting_anndata(
+    adata,
+    matrix_dtype=np.float32,
+    force_dense: bool = False,
+    categorical_obs_keep: Optional[set[str]] = None,
+    obs_drop: Optional[set[str]] = None,
+    obs_rename: Optional[dict[str, str]] = None,
+):
     """Return a reduced AnnData for notebook/plotting use."""
     out = adata.copy()
 
@@ -432,6 +544,28 @@ def make_plotting_anndata(adata, matrix_dtype=np.float32, force_dense: bool = Fa
     ]
 
     out.obs.drop([c for c in obs_cols if c in out.obs.columns], axis=1, inplace=True)
+    if obs_drop:
+        out.obs.drop(
+            [c for c in obs_drop if c in out.obs.columns], axis=1, inplace=True
+        )
+    if categorical_obs_keep is not None:
+        out.obs.drop(
+            [
+                c
+                for c in out.obs.columns
+                if str(out.obs[c].dtype) == "category"
+                and c not in categorical_obs_keep
+            ],
+            axis=1,
+            inplace=True,
+        )
+    if obs_rename:
+        for old_key, new_key in obs_rename.items():
+            if old_key == new_key or old_key not in out.obs.columns:
+                continue
+            out.obs[new_key] = out.obs[old_key]
+            del out.obs[old_key]
+    order_plotting_obs_columns(out)
     out.var.drop([c for c in var_cols if c in out.var.columns], axis=1, inplace=True)
     out.varm.clear()
     out.layers.clear()
@@ -440,13 +574,20 @@ def make_plotting_anndata(adata, matrix_dtype=np.float32, force_dense: bool = Fa
     for key in ["pca", "log1p"]:
         out.uns.pop(key, None)
 
-    keep_obsm = {"spatial", "X_umap"}
+    add_spatial_offset(out)
+
+    for umap_key in ["X_umap", "x_umap"]:
+        if umap_key in out.obsm:
+            if "CoPro_umap" not in out.obsm:
+                out.obsm["CoPro_umap"] = out.obsm[umap_key]
+            del out.obsm[umap_key]
+
+    keep_obsm = {"spatial_offset", "CoPro_umap"}
     for key in list(out.obsm.keys()):
         if key not in keep_obsm:
             del out.obsm[key]
+    out.obsp.clear()
     for key in PLOTTING_EMBEDDING_KEYS:
-        if key in out.obsp:
-            del out.obsp[key]
         if key in out.uns:
             del out.uns[key]
 

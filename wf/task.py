@@ -404,13 +404,49 @@ def glue_train_task(
     if atac_tiles_matched is not None:
         atac_tiles_matched.write(f"{out_dir}/atac_glue.h5ad")
     ge_plotting = utils.make_plotting_anndata(
-        ge_result, matrix_dtype=np.float16, force_dense=True
+        ge_result,
+        matrix_dtype=np.float16,
+        force_dense=True,
+        obs_rename={
+            "sg_clusters": "CoPro clusters",
+            "cluster": "ATAC_cluster",
+        },
     )
+    rna_plotting = utils.make_plotting_anndata(
+        rna_result,
+        matrix_dtype=np.float16,
+        categorical_obs_keep={
+            "sample",
+            "condition",
+            "cluster",
+            "sg_cluster",
+            "sg_clusters",
+        },
+        obs_drop={"on_off", "row", "col", "xcor", "ycor"},
+        obs_rename={
+            "sg_clusters": "CoPro clusters",
+            "cluster": "WT_cluster",
+        },
+    )
+    if "ATAC_cluster" in ge_plotting.obs.columns:
+        rna_plotting.obs["ATAC_cluster"] = ge_plotting.obs.loc[
+            rna_plotting.obs_names, "ATAC_cluster"
+        ].values
+    if "WT_cluster" in rna_plotting.obs.columns:
+        ge_plotting.obs["WT_cluster"] = rna_plotting.obs.loc[
+            ge_plotting.obs_names, "WT_cluster"
+        ].values
+    utils.order_plotting_obs_columns(ge_plotting)
+    utils.order_plotting_obs_columns(rna_plotting)
+
     ge_plotting.write(f"{out_dir}/ge_glue_sm.h5ad")
+    rna_plotting.write(f"{out_dir}/rna_glue_sm.h5ad")
     ge_result.write(f"{out_dir}/ge_glue.h5ad")
     rna_result.write(f"{out_dir}/rna_glue.h5ad")
     pd.DataFrame([{
         "has_atac_tiles": bool(atac_tiles_matched is not None),
+        "rna_full_h5ad": "rna_glue.h5ad",
+        "rna_plotting_h5ad": "rna_glue_sm.h5ad",
         "ge_full_h5ad": "ge_glue.h5ad",
         "ge_plotting_h5ad": "ge_glue_sm.h5ad",
     }]).to_csv(f"{out_dir}/coverage_manifest.csv", index=False)
@@ -480,9 +516,23 @@ def finalize_task(
     results_dir: LatchDir,
     coverage_dir: LatchDir,
     peak2gene_dir: LatchDir,
+    preprocess_dir: LatchDir,
 ) -> LatchDir:
     logging.info(f"Coverage outputs written to: {coverage_dir.remote_path}")
     logging.info(f"Peak2Gene outputs written to: {peak2gene_dir.remote_path}")
+    logging.info(f"Deleting preprocess checkpoint: {preprocess_dir.remote_path}")
+    try:
+        subprocess.run(
+            ["latch", "rmr", "-y", "--no-glob", preprocess_dir.remote_path],
+            check=True,
+        )
+    except Exception as e:
+        warning = (
+            "Unable to delete preprocess checkpoint after workflow completion: "
+            f"{e}"
+        )
+        logging.exception(warning)
+        message(typ="warning", data={"title": "Preprocess cleanup failed", "body": warning})
     return results_dir
 
 

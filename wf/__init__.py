@@ -240,6 +240,7 @@ def glue_wf(
         results_dir=corr_results,
         coverage_dir=coverage_results,
         peak2gene_dir=peak2gene_results,
+        preprocess_dir=prepared,
     )
 
 
