@@ -503,6 +503,27 @@ def order_plotting_obs_columns(adata) -> None:
     adata.obs = adata.obs.loc[:, ordered]
 
 
+def plotting_x_matrix(adata, priority: list[str]):
+    for source in priority:
+        if source == "X":
+            return adata.X, "X"
+        if source == "raw":
+            raw = getattr(adata, "raw", None)
+            if raw is None or raw.X is None or raw.X.shape[0] != adata.n_obs:
+                continue
+            raw_var_names = pd.Index(raw.var_names).astype(str)
+            var_names = pd.Index(adata.var_names).astype(str)
+            if raw.X.shape[1] == adata.n_vars and raw_var_names.equals(var_names):
+                return raw.X, "raw"
+            idx = raw_var_names.get_indexer(var_names)
+            if (idx >= 0).all():
+                return raw.X[:, idx], "raw"
+            continue
+        if source in adata.layers:
+            return adata.layers[source], f"layers/{source}"
+    return adata.X, "X"
+
+
 def make_plotting_anndata(
     adata,
     matrix_dtype=np.float32,
@@ -510,6 +531,7 @@ def make_plotting_anndata(
     categorical_obs_keep: Optional[set[str]] = None,
     obs_drop: Optional[set[str]] = None,
     obs_rename: Optional[dict[str, str]] = None,
+    x_priority: Optional[list[str]] = None,
 ):
     """Return a reduced AnnData for notebook/plotting use."""
     out = adata.copy()
@@ -566,6 +588,8 @@ def make_plotting_anndata(
             out.obs[new_key] = out.obs[old_key]
             del out.obs[old_key]
     order_plotting_obs_columns(out)
+    out.X, x_source = plotting_x_matrix(out, x_priority or ["X"])
+    out.uns["plotting_x_source"] = x_source
     out.var.drop([c for c in var_cols if c in out.var.columns], axis=1, inplace=True)
     out.varm.clear()
     out.layers.clear()
