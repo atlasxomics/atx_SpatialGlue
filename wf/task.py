@@ -431,6 +431,7 @@ def glue_train_task(
             "sg_clusters": "CoPro clusters",
             "cluster": "WT_cluster",
         },
+        x_priority=["counts", "raw", "X"],
     )
     if "ATAC_cluster" in ge_plotting.obs.columns:
         rna_plotting.obs["ATAC_cluster"] = ge_plotting.obs.loc[

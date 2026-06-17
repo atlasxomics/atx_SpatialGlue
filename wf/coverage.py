@@ -51,6 +51,13 @@ def candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list
     return candidates
 
 
+def valid_group_column(adata, col: str) -> bool:
+    if col not in adata.obs.columns:
+        return False
+    n_unique = adata.obs[col].nunique(dropna=True)
+    return 1 < n_unique < adata.n_obs
+
+
 def export_coverage_group(atac, groupby: str, out_dir: str, suffix: str) -> None:
     import snapatac2 as snap
 
@@ -71,8 +78,33 @@ def export_coverage_group(atac, groupby: str, out_dir: str, suffix: str) -> None
         logging.warning(f"No bigWig files were created for {groupby}.")
 
 
+def copy_rna_obs_to_atac(atac, rna, source_col: str, target_col: str) -> bool:
+    if not valid_group_column(rna, source_col):
+        logging.info(
+            "Skipping coverage group '%s': missing or not a useful grouping.",
+            source_col,
+        )
+        return False
+    atac.obs[target_col] = pd.Categorical(
+        rna.obs.loc[atac.obs_names, source_col].astype(str).values
+    )
+    return True
+
+
 def export_cluster_coverages(out_dir: str, atac, rna) -> None:
     logging.info("Creating coverage tracks...")
+
+    for col in ["sample", "condition"]:
+        if not copy_rna_obs_to_atac(atac, rna, col, col):
+            continue
+        safe_col = utils.safe_name(col)
+        logging.info(f"Exporting coverage tracks for '{col}'.")
+        export_coverage_group(
+            atac,
+            groupby=col,
+            out_dir=os.path.join(out_dir, f"{safe_col}_coverages"),
+            suffix=f"_{safe_col}.bw",
+        )
 
     glue_dir = os.path.join(out_dir, "glue_cluster_coverages")
     export_coverage_group(
@@ -89,9 +121,7 @@ def export_cluster_coverages(out_dir: str, atac, rna) -> None:
         for col in rna_cluster_cols:
             safe_col = utils.safe_name(col)
             groupby = f"rna_{safe_col}"
-            atac.obs[groupby] = pd.Categorical(
-                rna.obs.loc[atac.obs_names, col].astype(str).values
-            )
+            copy_rna_obs_to_atac(atac, rna, col, groupby)
             logging.info(f"Exporting RNA cluster coverage tracks for '{col}'.")
             export_coverage_group(
                 atac,
@@ -130,12 +160,18 @@ def write_archr_cluster_metadata(rna, path: str) -> None:
             "obs['sg_clusters']."
         )
 
-    clusters = rna.obs["sg_clusters"].astype(str)
     metadata = pd.DataFrame({
         "cell_id": rna.obs_names.astype(str),
         "barcode": [_extract_barcode(cell) for cell in rna.obs_names.astype(str)],
-        "sg_clusters": clusters.values,
+        "sg_clusters": rna.obs["sg_clusters"].astype(str).values,
     })
+    for col in ["sample", "condition"]:
+        if valid_group_column(rna, col):
+            metadata[col] = rna.obs[col].astype(str).values
+
+    reserved = {"sg_clusters", "sg_leiden", "sg_leiden_merged"}
+    for col in candidate_cluster_columns(rna, exclude=reserved):
+        metadata[f"rna_{utils.safe_name(col)}"] = rna.obs[col].astype(str).values
 
     missing_barcodes = metadata["barcode"].isna().sum()
     if missing_barcodes:

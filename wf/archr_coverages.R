@@ -139,6 +139,102 @@ copy_archr_group <- function(group_dir_name, target_subdir) {
   copy_bigwigs(paths, file.path(out_dir, target_subdir))
 }
 
+safe_name <- function(x) {
+  safe <- gsub("[^A-Za-z0-9_.-]+", "_", as.character(x))
+  safe <- gsub("^_+|_+$", "", safe)
+  ifelse(nzchar(safe), safe, "labels")
+}
+
+valid_group_values <- function(values) {
+  values <- as.character(values)
+  values <- values[!is.na(values) & nzchar(values)]
+  n_unique <- length(unique(values))
+  n_unique >= 2 && n_unique < length(values)
+}
+
+assign_metadata_column <- function(column_name, archr_cells, clusters) {
+  assignments <- rep(NA_character_, length(archr_cells))
+  values <- as.character(clusters[[column_name]])
+  assignments <- assign_by_key(
+    assignments,
+    archr_cells,
+    as.character(clusters$cell_id),
+    values
+  )
+  assignments <- assign_by_key(
+    assignments,
+    donor_barcode_key(archr_cells),
+    donor_barcode_key(clusters$cell_id),
+    values
+  )
+  assignments <- assign_by_key(
+    assignments,
+    extract_barcode(archr_cells),
+    as.character(clusters$barcode),
+    values
+  )
+  assignments
+}
+
+export_archr_group_bigwigs <- function(proj, group_by, target_subdir, required = FALSE) {
+  tryCatch(
+    {
+      message("Creating ArchR group coverages for ", group_by)
+      proj <- addGroupCoverages(
+        ArchRProj = proj,
+        groupBy = group_by,
+        maxCells = 1500,
+        force = TRUE
+      )
+
+      message("Writing ArchR group BigWigs for ", group_by)
+      bws <- getGroupBW(
+        ArchRProj = proj,
+        groupBy = group_by,
+        normMethod = "ReadsInTSS",
+        tileSize = 100,
+        maxCells = 1000,
+        ceiling = 4,
+        verbose = TRUE,
+        threads = threads,
+        logFile = createLogFile(paste0("getGroupBW_", safe_name(group_by)))
+      )
+
+      bw_paths <- as.character(unlist(bws))
+      if (length(bw_paths) == 0 || !any(file.exists(bw_paths))) {
+        bw_paths <- list.files(
+          file.path(archr_project_path, "GroupBigWigs"),
+          pattern = "\\.bw$",
+          recursive = TRUE,
+          full.names = TRUE
+        )
+        bw_paths <- bw_paths[grepl(group_by, bw_paths, fixed = TRUE)]
+      }
+
+      copy_bigwigs(bw_paths, file.path(out_dir, target_subdir))
+      proj
+    },
+    error = function(e) {
+      msg <- paste0("Unable to export ArchR coverages for ", group_by, ": ", conditionMessage(e))
+      if (isTRUE(required)) {
+        stop(msg)
+      }
+      warning(msg)
+      proj
+    }
+  )
+}
+
+candidate_archr_cluster_columns <- function(proj) {
+  cell_data <- as.data.frame(getCellColData(proj))
+  cols <- colnames(cell_data)
+  cols <- cols[grepl("cluster|leiden|louvain", tolower(cols))]
+  cols <- cols[!cols %in% c("sg_clusters")]
+  cols <- cols[!grepl("^rna_", cols)]
+  valid <- vapply(cols, function(col) valid_group_values(cell_data[[col]]), logical(1))
+  cols[valid]
+}
+
 load_project_genome <- function(proj) {
   genome <- tryCatch(proj@genome, error = function(e) NA_character_)
   if (all(is.na(genome))) {
@@ -239,26 +335,7 @@ if (length(missing_cols) > 0) {
 }
 
 archr_cells <- as.character(proj$cellNames)
-assignments <- rep(NA_character_, length(archr_cells))
-
-assignments <- assign_by_key(
-  assignments,
-  archr_cells,
-  as.character(clusters$cell_id),
-  as.character(clusters$sg_clusters)
-)
-assignments <- assign_by_key(
-  assignments,
-  donor_barcode_key(archr_cells),
-  donor_barcode_key(clusters$cell_id),
-  as.character(clusters$sg_clusters)
-)
-assignments <- assign_by_key(
-  assignments,
-  extract_barcode(archr_cells),
-  as.character(clusters$barcode),
-  as.character(clusters$sg_clusters)
-)
+assignments <- assign_metadata_column("sg_clusters", archr_cells, clusters)
 
 matched <- !is.na(assignments)
 message("Matched ", sum(matched), " / ", length(archr_cells), " ArchR cells to sg_clusters")
@@ -271,48 +348,65 @@ if (sum(!matched) > 0) {
 }
 
 proj <- proj[proj$cellNames %in% archr_cells[matched]]
-proj <- addCellColData(
-  ArchRProj = proj,
-  data = assignments[matched],
-  cells = archr_cells[matched],
-  name = "sg_clusters",
-  force = TRUE
-)
-
-message("Creating ArchR group coverages for sg_clusters")
-proj <- addGroupCoverages(
-  ArchRProj = proj,
-  groupBy = "sg_clusters",
-  maxCells = 1500,
-  force = TRUE
-)
-
-message("Writing ArchR group BigWigs for sg_clusters")
-bws <- getGroupBW(
-  ArchRProj = proj,
-  groupBy = "sg_clusters",
-  normMethod = "ReadsInTSS",
-  tileSize = 100,
-  maxCells = 1000,
-  ceiling = 4,
-  verbose = TRUE,
-  threads = threads,
-  logFile = createLogFile("getGroupBW_sg_clusters")
-)
-
-bw_paths <- as.character(unlist(bws))
-if (length(bw_paths) == 0 || !any(file.exists(bw_paths))) {
-  bw_paths <- list.files(
-    file.path(archr_project_path, "GroupBigWigs"),
-    pattern = "\\.bw$",
-    recursive = TRUE,
-    full.names = TRUE
+metadata_cols <- setdiff(colnames(clusters), c("cell_id", "barcode"))
+valid_metadata_cols <- character()
+for (col in metadata_cols) {
+  col_assignments <- assign_metadata_column(col, archr_cells, clusters)
+  col_values <- col_assignments[matched]
+  if (!identical(col, "sg_clusters") && !valid_group_values(col_values)) {
+    message("Skipping ArchR metadata group ", col, ": not a useful grouping.")
+    next
+  }
+  proj <- addCellColData(
+    ArchRProj = proj,
+    data = col_values,
+    cells = archr_cells[matched],
+    name = col,
+    force = TRUE
   )
-  bw_paths <- bw_paths[grepl("sg_clusters", bw_paths)]
+  valid_metadata_cols <- c(valid_metadata_cols, col)
 }
 
-copy_bigwigs(bw_paths, file.path(out_dir, "glue_cluster_coverages"))
-copy_archr_group("Clusters", file.path("atac_cluster_coverages", "Clusters"))
-copy_archr_group("Sample", "sample_coverages")
+metadata_targets <- list(
+  sg_clusters = "glue_cluster_coverages",
+  sample = "sample_coverages",
+  condition = "condition_coverages"
+)
+for (col in valid_metadata_cols) {
+  if (col %in% names(metadata_targets)) {
+    target_subdir <- metadata_targets[[col]]
+  } else if (grepl("^rna_", col)) {
+    target_subdir <- file.path("rna_cluster_coverages", sub("^rna_", "", col))
+  } else {
+    target_subdir <- file.path("metadata_coverages", safe_name(col))
+  }
+  proj <- export_archr_group_bigwigs(
+    proj,
+    group_by = col,
+    target_subdir = target_subdir,
+    required = identical(col, "sg_clusters")
+  )
+}
+
+atac_cluster_cols <- candidate_archr_cluster_columns(proj)
+if (length(atac_cluster_cols) > 0) {
+  for (col in atac_cluster_cols) {
+    proj <- export_archr_group_bigwigs(
+      proj,
+      group_by = col,
+      target_subdir = file.path("atac_cluster_coverages", safe_name(col)),
+      required = FALSE
+    )
+  }
+} else {
+  message("No ArchR cluster-like colData columns found for ATAC cluster coverages.")
+}
+
+if (!"sample" %in% valid_metadata_cols) {
+  copy_archr_group("Sample", "sample_coverages")
+}
+if (!"Clusters" %in% atac_cluster_cols) {
+  copy_archr_group("Clusters", file.path("atac_cluster_coverages", "Clusters"))
+}
 
 message("ArchR coverage export complete.")
