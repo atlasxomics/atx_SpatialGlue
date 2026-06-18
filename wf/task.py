@@ -425,6 +425,7 @@ def glue_train_task(
     rna_plotting = utils.make_plotting_anndata(
         rna_result,
         matrix_dtype=np.float16,
+        force_dense=True,
         categorical_obs_keep=plotting_categorical_obs_keep,
         obs_drop=plotting_obs_drop,
         obs_rename={
