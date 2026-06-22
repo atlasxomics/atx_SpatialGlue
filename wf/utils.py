@@ -507,6 +507,32 @@ def plotting_x_matrix(adata, priority: list[str]):
     for source in priority:
         if source == "X":
             return adata.X, "X"
+        if source == "counts_lognorm" and "counts" in adata.layers:
+            from wf import correlation as corr
+
+            return (
+                corr.log_norm(to_dense(adata.layers["counts"]), scaleto=10000),
+                "computed_log1p_from_layers/counts",
+            )
+        if source == "raw_lognorm":
+            raw = getattr(adata, "raw", None)
+            if raw is None or raw.X is None or raw.X.shape[0] != adata.n_obs:
+                continue
+            raw_var_names = pd.Index(raw.var_names).astype(str)
+            var_names = pd.Index(adata.var_names).astype(str)
+            if raw.X.shape[1] == adata.n_vars and raw_var_names.equals(var_names):
+                raw_X = raw.X
+            else:
+                idx = raw_var_names.get_indexer(var_names)
+                if not (idx >= 0).all():
+                    continue
+                raw_X = raw.X[:, idx]
+            from wf import correlation as corr
+
+            return (
+                corr.log_norm(to_dense(raw_X), scaleto=10000),
+                "computed_log1p_from_raw",
+            )
         if source == "raw":
             raw = getattr(adata, "raw", None)
             if raw is None or raw.X is None or raw.X.shape[0] != adata.n_obs:

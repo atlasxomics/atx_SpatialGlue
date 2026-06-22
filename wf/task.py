@@ -432,7 +432,14 @@ def glue_train_task(
             "sg_clusters": "CoPro_cluster",
             "cluster": "RNA_cluster",
         },
-        x_priority=["counts", "raw", "X"],
+        x_priority=[
+            "log1p",
+            "lognorm",
+            "counts_lognorm",
+            "raw_lognorm",
+            "normalized",
+            "X",
+        ],
     )
     if "ATAC_cluster" in ge_plotting.obs.columns:
         rna_plotting.obs["ATAC_cluster"] = ge_plotting.obs.loc[
@@ -632,7 +639,7 @@ def corr_task(
 
     logging.info("Ensuring dense matrix...")
     # Prefer monotonic transform (normalized/log1p/counts layers)
-    preferred_layers = ["normalized", "log1p", "counts"]
+    preferred_layers = ["log1p", "lognorm", "normalized", "counts"]
     X_rna = None
     for layer in preferred_layers:
         if layer in rna_sub.layers:
