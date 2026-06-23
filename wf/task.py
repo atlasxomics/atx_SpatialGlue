@@ -475,7 +475,7 @@ def glue_train_task(
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
 
 
-@custom_task(cpu=8, memory=192, storage_gib=1000)
+@custom_task(cpu=32, memory=192, storage_gib=1000)
 def coverage_task(
     project_name: str,
     results_dir: LatchDir,
@@ -485,6 +485,13 @@ def coverage_task(
 
     out_dir = f"/root/{project_name}_coverages"
     os.makedirs(out_dir, exist_ok=True)
+    coverage_threads = "32"
+    os.environ.setdefault("COVERAGE_THREADS", coverage_threads)
+    os.environ.setdefault("ARCHR_THREADS", coverage_threads)
+    os.environ.setdefault("OMP_NUM_THREADS", coverage_threads)
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", coverage_threads)
+    os.environ.setdefault("MKL_NUM_THREADS", coverage_threads)
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", coverage_threads)
 
     manifest_path = LatchFile(f"{results_dir.remote_path}/coverage_manifest.csv").local_path
     manifest = pd.read_csv(manifest_path)

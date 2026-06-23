@@ -1,4 +1,5 @@
 import glob
+import inspect
 import logging
 import os
 import re
@@ -34,6 +35,27 @@ def resolve_rscript() -> str:
     return rscript
 
 
+def coverage_threads() -> int:
+    raw = os.environ.get("COVERAGE_THREADS") or os.environ.get("ARCHR_THREADS")
+    try:
+        threads = int(raw) if raw is not None else 32
+    except ValueError:
+        threads = 32
+    return max(1, threads)
+
+
+def configure_thread_env(threads: int) -> None:
+    for key in [
+        "ARCHR_THREADS",
+        "COVERAGE_THREADS",
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ]:
+        os.environ.setdefault(key, str(threads))
+
+
 def candidate_cluster_columns(adata, exclude: Optional[set[str]] = None) -> list[str]:
     exclude = exclude or set()
     candidates = []
@@ -63,12 +85,24 @@ def export_coverage_group(atac, groupby: str, out_dir: str, suffix: str) -> None
 
     os.makedirs(out_dir, exist_ok=True)
     before = set(glob.glob("*.bw"))
+    threads = coverage_threads()
+    configure_thread_env(threads)
+    kwargs = {}
+    try:
+        params = inspect.signature(snap.ex.export_coverage).parameters
+        for name in ["n_jobs", "n_threads", "num_threads", "threads"]:
+            if name in params:
+                kwargs[name] = threads
+                break
+    except (TypeError, ValueError):
+        logging.info("Could not inspect SnapATAC2 export_coverage thread kwargs.")
     snap.ex.export_coverage(
         atac,
         groupby=groupby,
         suffix=suffix,
         bin_size=10,
         output_format="bigwig",
+        **kwargs,
     )
     after = set(glob.glob("*.bw"))
     new_bws = sorted(after - before)
