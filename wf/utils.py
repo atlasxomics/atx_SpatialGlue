@@ -630,9 +630,8 @@ def make_plotting_anndata(
         if umap_key in out.obsm:
             if "CoPro_umap" not in out.obsm:
                 out.obsm["CoPro_umap"] = out.obsm[umap_key]
-            del out.obsm[umap_key]
 
-    keep_obsm = {"spatial_offset", "CoPro_umap"}
+    keep_obsm = {"spatial_offset", "CoPro_umap", "X_umap"}
     for key in list(out.obsm.keys()):
         if key not in keep_obsm:
             del out.obsm[key]

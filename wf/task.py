@@ -386,7 +386,7 @@ def glue_train_task(
     for obj in [rna_result, ge_result]:
         obj.obsm["SpatialGlue"] = adata.obsm["SpatialGlue"]
         if "X_umap" in adata.obsm:
-            obj.obsm["X_umap"] = adata.obsm["X_umap"]
+            obj.obsm["CoPro_umap"] = adata.obsm["X_umap"]
         obj.uns["spatialglue_umap_params"] = {
             "source_representation": "SpatialGlue",
             "n_neighbors": int(n_neighbors),
