@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import pickle
 import random
+import shutil
 import subprocess
 import sys
 from typing import Optional
@@ -258,7 +259,18 @@ def glue_train_task(
     best_merged_key = None
     best_resolution = None
     connectivities = utils.spatial_connectivities(adata, n_neighbors=n_neighbors)
-    for resolution in utils.parse_resolutions(resolutions):
+    resolutions_to_run = (
+        [float(chosen_resolution)]
+        if chosen_resolution != 0
+        else utils.parse_resolutions(resolutions)
+    )
+    if chosen_resolution != 0:
+        logging.info(
+            "Using clustering override resolution %s; skipping resolution sweep.",
+            f"{chosen_resolution:g}",
+        )
+
+    for resolution in resolutions_to_run:
         key = f"sg_leiden_{utils.resolution_suffix(resolution)}"
         merged_key = f"{key}_merged"
         sc.tl.leiden(
@@ -341,7 +353,15 @@ def glue_train_task(
     for row in sweep_rows:
         cluster_result_keys.extend([row["raw_key"], row["merged_key"]])
     cluster_result_keys.append("sg_clusters")
-    pl.write_cluster_resolution_plots(out_dir, adata, cluster_result_keys)
+    cluster_plot_keys = [row["merged_key"] for row in sweep_rows]
+    cluster_plot_keys.append("sg_clusters")
+    pl.write_cluster_resolution_plots(out_dir, adata, cluster_plot_keys)
+    spatial_clusters = utils.fig_path(out_dir, "clustering/spatial_sg_clusters.png")
+    if os.path.exists(spatial_clusters):
+        shutil.copyfile(
+            spatial_clusters,
+            utils.fig_path(out_dir, "spatial_sg_clusters.png"),
+        )
     sc.pl.umap(
         adata,
         color=["sg_clusters"],
