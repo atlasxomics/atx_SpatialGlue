@@ -417,6 +417,35 @@ def glue_train_task(
             logging.exception(warning)
             message(typ="warning", data={"title": warning, "body": warning})
 
+    # -------------------- Spatial autocorrelation --------------------
+    if "spatial" in rna_result.obsm:
+        for mod_adata, modality, prefix in [
+            (rna_result, "RNA", "rna"),
+            (ge_result, "GE", "ge"),
+        ]:
+            try:
+                svg_df = utils.run_spatial_autocorr(
+                    mod_adata, n_jobs=4
+                )
+                svg_df.to_csv(
+                    utils.table_path(out_dir, f"svg_{prefix}.csv")
+                )
+                pl.plot_svg_spatial(
+                    mod_adata,
+                    svg_df,
+                    out_dir=out_dir,
+                    filename=f"svg_spatial_{prefix}.png",
+                    modality=modality,
+                    top_n=10,
+                )
+            except Exception as e:
+                warning = f"Spatial autocorrelation failed for {modality}: {e}"
+                logging.exception(warning)
+                message(
+                    typ="warning",
+                    data={"title": f"SVG {modality} failed", "body": warning},
+                )
+
     logging.info("Writing data...")
     for obj in result_objects:
         utils.strip_plotting_embeddings(obj)
@@ -430,7 +459,18 @@ def glue_train_task(
         "sg_cluster",
         "sg_clusters",
     }
-    plotting_obs_drop = {"on_off", "row", "col", "xcor", "ycor", "sample_name"}
+    plotting_obs_drop = {
+        "on_off",
+        "row",
+        "col",
+        "row_x",
+        "col_x",
+        "row_y",
+        "col_y",
+        "xcor",
+        "ycor",
+        "sample_name",
+    }
     ge_plotting = utils.make_plotting_anndata(
         ge_result,
         matrix_dtype=np.float16,

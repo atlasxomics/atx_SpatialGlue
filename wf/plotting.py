@@ -578,7 +578,9 @@ def scatter_spatial(
     cmap="Spectral_r",
     categorical=False,
     show_legend=True,
+    point_size: Optional[float] = None,
 ):
+    marker_size = utils.SPATIAL_SCATTER_POINT_SIZE if point_size is None else point_size
     if categorical:
         labels = pd.Categorical(values.astype(str))
         codes = labels.codes
@@ -586,7 +588,7 @@ def scatter_spatial(
             coords[:, 0],
             coords[:, 1],
             c=codes,
-            s=utils.SPATIAL_SCATTER_POINT_SIZE,
+            s=marker_size,
             cmap="tab20",
         )
         handles = []
@@ -607,7 +609,7 @@ def scatter_spatial(
             coords[:, 0],
             coords[:, 1],
             c=values,
-            s=utils.SPATIAL_SCATTER_POINT_SIZE,
+            s=marker_size,
             cmap=cmap,
         )
         plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
@@ -815,6 +817,80 @@ def write_umi_reports(
             "genes_of_interest/umi_violin_per_cluster.png",
             gene,
         )
+        plt.close(fig)
+
+
+def plot_svg_spatial(
+    adata,
+    svg_df: pd.DataFrame,
+    out_dir: str,
+    filename: str,
+    modality: str,
+    top_n: int = 10,
+    layer: Optional[str] = None,
+    point_size: float = 0.7,
+) -> None:
+    """Plot spatial expression of the top N spatially variable genes."""
+
+    if svg_df.empty or "spatial" not in adata.obsm:
+        return
+
+    # squidpy result: gene names are the index, columns are I / pval_norm / etc.
+    top_genes = [g for g in svg_df.index[:top_n] if g in adata.var_names]
+    if not top_genes:
+        return
+
+    if layer is not None and layer in adata.layers:
+        X = utils.to_dense(adata.layers[layer]).astype(np.float32)
+    else:
+        X = None
+        for candidate in ["log1p", "lognorm", "normalized"]:
+            if candidate in adata.layers:
+                X = utils.to_dense(adata.layers[candidate]).astype(np.float32)
+                break
+        if X is None:
+            X = utils.to_dense(adata.X).astype(np.float32)
+
+    gene_to_idx = {g: i for i, g in enumerate(adata.var_names.astype(str))}
+    i_lookup = svg_df["I"]
+    coords = np.asarray(adata.obsm["spatial"])
+    samples = sample_labels(adata)
+
+    n_cols = 5
+    n_rows = max(1, -(-len(top_genes) // n_cols))
+
+    for sample in sorted(set(samples)):
+        mask = samples == sample
+        fig, axes = plt.subplots(
+            n_rows, n_cols,
+            figsize=(n_cols * 4, n_rows * 4),
+            squeeze=False,
+        )
+        axes = axes.ravel()
+        for i, gene in enumerate(top_genes):
+            idx = gene_to_idx.get(gene)
+            if idx is None:
+                axes[i].axis("off")
+                continue
+            moran_i = float(i_lookup.get(gene, float("nan")))
+            scatter_spatial(
+                axes[i],
+                coords[mask],
+                X[mask, idx],
+                f"{gene}  I={moran_i:.3f}",
+                cmap="Spectral_r",
+                point_size=point_size,
+            )
+        for ax in axes[len(top_genes):]:
+            ax.axis("off")
+        plt.suptitle(
+            f"{sample} {modality} — top {len(top_genes)} spatially variable genes",
+            fontsize=13,
+            fontweight="bold",
+            y=1.02,
+        )
+        plt.tight_layout()
+        utils.save_fig_suffix(fig, out_dir, filename, sample)
         plt.close(fig)
 
 

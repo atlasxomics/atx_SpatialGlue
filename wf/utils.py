@@ -758,6 +758,70 @@ def spatial_connectivities(adata, n_neighbors: int):
     return conn.maximum(conn.T)
 
 
+def run_spatial_autocorr(
+    adata,
+    n_jobs: int = 4,
+) -> pd.DataFrame:
+    """Compute Moran's I per gene using squidpy; results in adata.uns['moranI']."""
+    import squidpy as sq
+
+    library_key = "sample" if "sample" in adata.obs.columns else None
+    if "spatial_connectivities" not in adata.obsp:
+        try:
+            sq.gr.spatial_neighbors(
+                adata,
+                coord_type="grid",
+                n_rings=1,
+                library_key=library_key,
+            )
+        except Exception as grid_err:
+            logging.warning(
+                "Grid spatial neighbors failed (%s); falling back to generic.",
+                grid_err,
+            )
+            sq.gr.spatial_neighbors(
+                adata,
+                coord_type="generic",
+                library_key=library_key,
+            )
+
+    layer = None
+    for candidate in ["log1p", "lognorm", "normalized"]:
+        if candidate in adata.layers:
+            layer = candidate
+            break
+
+    genes_upper = pd.Index(adata.var_names.astype(str)).str.upper()
+    keep = ~(
+        genes_upper.str.startswith("MT-")
+        | genes_upper.str.startswith("RPS")
+        | genes_upper.str.startswith("RPL")
+        | genes_upper.str.startswith("MTRNR")
+    )
+    if "highly_variable" in adata.var.columns:
+        keep = keep & adata.var["highly_variable"].to_numpy()
+
+    test_genes = adata.var_names[keep].tolist()
+    if not test_genes:
+        raise ValueError("No genes remain after filtering for spatial autocorrelation.")
+
+    logging.info(
+        "Running spatial autocorrelation (Moran's I) on %d genes (layer=%s).",
+        len(test_genes),
+        layer or "X",
+    )
+    sq.gr.spatial_autocorr(
+        adata,
+        mode="moran",
+        genes=test_genes,
+        layer=layer,
+        n_perms=None,
+        n_jobs=n_jobs,
+    )
+
+    return adata.uns["moranI"].sort_values("I", ascending=False)
+
+
 def choose_n_components(n_obs: int, n_vars: int, requested: int) -> int:
     n_components = min(requested, n_obs - 1, n_vars - 1)
     if n_components < 1:

@@ -123,8 +123,7 @@ workdir /root
 run /usr/local/bin/R -e "renv::restore()" && \
     /usr/local/bin/Rscript -e "library(ArchR); cat('ArchR ', as.character(packageVersion('ArchR')), '\n', sep = '')"
 
-run /usr/local/bin/Rscript -e "BiocManager::install('BSgenome.Mmusculus.UCSC.mm39', ask = FALSE, update = FALSE)" && \
-    /usr/local/bin/Rscript -e "library(BSgenome.Mmusculus.UCSC.mm39); cat('BSgenome.Mmusculus.UCSC.mm39 loaded\n')"
+run /usr/local/bin/R -e "BiocManager::install(c('BSgenome.Mmusculus.UCSC.mm39', 'TxDb.Mmusculus.UCSC.mm39.knownGene', 'org.Mm.eg.db'), ask = FALSE, update = FALSE)"
 
 workdir /tmp/docker-build/work/
 

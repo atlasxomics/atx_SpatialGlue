@@ -38,4 +38,5 @@ dependencies:
   - pip:
       - requests
       - scikit-misc==0.2.0
+      - squidpy==1.2.3
       # -r requirements.txt
