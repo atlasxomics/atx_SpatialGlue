@@ -14,6 +14,12 @@ from scipy.spatial.distance import pdist
 import wf.utils as utils
 
 
+def _as_1d_array(values) -> np.ndarray:
+    if sp.issparse(values):
+        return np.asarray(values.toarray()).ravel()
+    return np.asarray(values).ravel()
+
+
 def plot_corr_volcano_broken(
     corr,
     outpath="corr_volcano.png",
@@ -603,6 +609,7 @@ def scatter_spatial(
         if show_legend:
             ax.legend(handles=handles, title="cluster", fontsize=6, loc="best")
     else:
+        values = _as_1d_array(values)
         scatter = ax.scatter(
             coords[:, 0],
             coords[:, 1],
@@ -665,7 +672,7 @@ def write_spatial_expression_reports(
                 scatter_spatial(
                     axes[i],
                     adata.obsm["spatial"][mask],
-                    matrix[mask, idx],
+                    _as_1d_array(matrix[mask, idx]),
                     f"{sample} {modality}: {gene}",
                     cmap=cmap,
                 )
@@ -683,13 +690,13 @@ def write_spatial_expression_reports(
             scatter_spatial(
                 axes[0],
                 rna.obsm["spatial"][mask],
-                X_rna[mask, idx],
+                _as_1d_array(X_rna[mask, idx]),
                 f"{sample} RNA: {gene}",
             )
             scatter_spatial(
                 axes[1],
                 ge.obsm["spatial"][mask],
-                X_ge[mask, idx],
+                _as_1d_array(X_ge[mask, idx]),
                 f"{sample} ATAC GE: {gene}",
             )
             fig.tight_layout()
@@ -782,7 +789,7 @@ def write_umi_reports(
         mask = labels == cluster
         n_spots = int(mask.sum())
         for gene in selected:
-            vals = X_counts[mask, gene_to_idx[gene]]
+            vals = _as_1d_array(X_counts[mask, gene_to_idx[gene]])
             rows.append({
                 "cluster": cluster,
                 "n_spots_in_cluster": n_spots,
@@ -801,7 +808,7 @@ def write_umi_reports(
     for page_idx, gene in enumerate(plot_genes, start=1):
         idx = gene_to_idx[gene]
         fig, ax = plt.subplots(figsize=(max(5, 0.6 * len(clusters)), 4))
-        data = [X_expr[labels == cluster, idx] for cluster in clusters]
+        data = [_as_1d_array(X_expr[labels == cluster, idx]) for cluster in clusters]
         ax.violinplot(data, showmeans=True, showextrema=False)
         ax.set_xticks(np.arange(1, len(clusters) + 1))
         ax.set_xticklabels(clusters, rotation=45)
@@ -908,8 +915,8 @@ def write_cluster_correlation_outputs(
                 "cluster": cluster,
                 "n_spots": n_spots,
                 "gene": gene,
-                "mean_rna_lognorm": float(X_rna[mask, idx].mean()),
-                "mean_atac_ge": float(X_ge[mask, idx].mean()),
+                "mean_rna_lognorm": float(_as_1d_array(X_rna[mask, idx]).mean()),
+                "mean_atac_ge": float(_as_1d_array(X_ge[mask, idx]).mean()),
             })
 
     per_cluster = pd.DataFrame(rows)

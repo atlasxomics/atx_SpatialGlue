@@ -11,7 +11,7 @@ def _colsum(X):
 
 def _colnnz(X):
     if sparse.issparse(X):
-        return np.diff(X.tocsc().indptr)
+        return X.getnnz(axis=0)
     else:
         return (X > 0).sum(axis=0)
 
@@ -62,7 +62,17 @@ def get_rna_counts_matrix(adata_view):
     if "counts" in adata_view.layers:
         return adata_view.layers["counts"], "counts"
     if getattr(adata_view, "raw", None) is not None and adata_view.raw.X is not None:
-        return adata_view.raw.X, "raw"
+        raw_var_names = pd.Index(adata_view.raw.var_names).astype(str)
+        var_names = pd.Index(adata_view.var_names).astype(str)
+        if adata_view.raw.X.shape[1] == adata_view.n_vars and raw_var_names.equals(var_names):
+            return adata_view.raw.X, "raw"
+        idx = raw_var_names.get_indexer(var_names)
+        if (idx >= 0).all():
+            return adata_view.raw.X[:, idx], "raw"
+        print(
+            "[warn] RNA .raw is missing genes from the synchronized RNA view; "
+            "using current X for RNA count stats."
+        )
     print(
         "[warn] RNA 'counts' or .raw missing; using current X (may be log-normalized)."
     )
