@@ -1,4 +1,5 @@
 import glob
+import json
 import logging
 import os
 import pandas as pd
@@ -13,9 +14,16 @@ import numpy as np
 
 from scipy import sparse
 
+from atx_common import Genome
 from latch.functions.messages import message
 from latch.resources.tasks import custom_task
 from latch.types import LatchDir, LatchFile
+from latch.types.plots import (
+    PlotsArtifact,
+    PlotsArtifactBindings,
+    PlotsArtifactTemplate,
+    Widget,
+)
 
 import wf.correlation as corr
 from wf.coverage import export_archr_cluster_coverages, export_cluster_coverages
@@ -32,6 +40,36 @@ logging.basicConfig(
 )
 
 
+def write_plots_artifact(out_dir: str, data_path: str, genome: str) -> None:
+    logging.info("Making Plots Artifact...")
+    artifact = PlotsArtifact(
+        bindings=PlotsArtifactBindings(
+            plot_templates=[
+                PlotsArtifactTemplate(
+                    template_id="1156",
+                    widgets=[
+                        Widget(
+                            transform_id="442179",
+                            key="data_path",
+                            value=data_path,
+                        ),
+                        Widget(
+                            transform_id="442178",
+                            key="coverages_genome",
+                            value=genome,
+                        ),
+                    ],
+                )
+            ]
+        )
+    )
+
+    artifacts_dir = os.path.join(out_dir, "Launch_Plots")
+    os.makedirs(artifacts_dir, exist_ok=True)
+    with open(os.path.join(artifacts_dir, "artifact.json"), "w") as f:
+        json.dump(artifact.asdict(), f, indent=2)
+
+
 @custom_task(cpu=4, memory=576, storage_gib=1000)
 def glue_preprocess_task(
     project_name: str,
@@ -39,7 +77,7 @@ def glue_preprocess_task(
     ge_anndata: LatchFile,
     atac_anndata: Optional[LatchFile] = None,
 ) -> LatchDir:
-    import scanpy as sc
+    import anndata as ad
     import torch
 
     # ------------------ Initialize ---------------------
@@ -54,12 +92,12 @@ def glue_preprocess_task(
         torch.cuda.manual_seed_all(utils.SEED)
 
     logging.info("Reading WT AnnData...")
-    rna = sc.read_h5ad(wt_anndata.local_path)
+    rna = ad.read_h5ad(wt_anndata.local_path)
 
     atac = None
     if atac_anndata is not None:
         logging.info("Reading ATAC tile AnnData...")
-        atac = sc.read_h5ad(atac_anndata.local_path)
+        atac = ad.read_h5ad(atac_anndata.local_path)
     else:
         logging.info(
             "No ATAC tile AnnData provided; coverage export will require an "
@@ -67,7 +105,7 @@ def glue_preprocess_task(
         )
 
     logging.info("Reading gene accessibility AnnData...")
-    ge = sc.read_h5ad(ge_anndata.local_path)
+    ge = ad.read_h5ad(ge_anndata.local_path)
 
     atac_n_obs = atac.n_obs if atac is not None else "not provided"
     logging.info(f"n_obs RNA: {rna.n_obs} n_obs ATAC tiles: {atac_n_obs} n_obs GE: {ge.n_obs}")
@@ -541,7 +579,7 @@ def coverage_task(
     results_dir: LatchDir,
     archr_project: Optional[LatchDir] = None,
 ) -> LatchDir:
-    import scanpy as sc
+    import anndata as ad
 
     out_dir = f"/root/{project_name}_coverages"
     os.makedirs(out_dir, exist_ok=True)
@@ -569,7 +607,7 @@ def coverage_task(
 
     rna_path = LatchFile(f"{results_dir.remote_path}/rna_copro.h5ad").local_path
     logging.info("Reading clustered RNA AnnData for coverage export...")
-    rna = sc.read_h5ad(rna_path)
+    rna = ad.read_h5ad(rna_path)
 
     if has_atac_tiles:
         if archr_project is not None:
@@ -583,7 +621,7 @@ def coverage_task(
         logging.info("Downloading clustered ATAC AnnData for coverage export...")
         atac_path = LatchFile(f"{results_dir.remote_path}/atac_tiles_copro.h5ad").local_path
         logging.info("Reading clustered ATAC AnnData object...")
-        atac = sc.read_h5ad(atac_path)
+        atac = ad.read_h5ad(atac_path)
         export_cluster_coverages(out_dir, atac, rna)
     else:
         logging.info("Using ArchRProject for coverage export...")
@@ -624,7 +662,7 @@ def peak2gene_task(
     peak2gene_archr_project: Optional[LatchDir] = None,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
-    import scanpy as sc
+    import anndata as ad
 
     out_dir = f"/root/{project_name}_peak2gene"
     os.makedirs(out_dir, exist_ok=True)
@@ -642,7 +680,7 @@ def peak2gene_task(
     try:
         rna_path = LatchFile(f"{results_dir.remote_path}/rna_copro.h5ad").local_path
         logging.info("Reading clustered RNA AnnData for Peak2Gene export...")
-        rna = sc.read_h5ad(rna_path)
+        rna = ad.read_h5ad(rna_path)
         run_archr_peak2gene(
             out_dir=out_dir,
             archr_project_path=peak2gene_archr_project.local_path,
@@ -666,13 +704,15 @@ def corr_task(
     project_name: str,
     results_dir: LatchDir,
     ge_anndata: LatchFile,
+    coverages_genome: Genome,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
-    import scanpy as sc
+    import anndata as ad
 
     out_dir = f"/root/{project_name}"
     os.makedirs(out_dir, exist_ok=True)
+    coverages_genome = coverages_genome.value
 
     # Download and read data -----------------------------------------------
     logging.info("Downloading RNA data...")
@@ -683,9 +723,9 @@ def corr_task(
     ge_path = ge_anndata.local_path
 
     logging.info("Reading RNA data...")
-    rna = sc.read_h5ad(rna_path)
+    rna = ad.read_h5ad(rna_path)
     logging.info("Reading Gene Accessibility data...")
-    ge = sc.read_h5ad(ge_path)
+    ge = ad.read_h5ad(ge_path)
 
     logging.info("Preparing data for correlation...")
     rna.obs_names = utils.ensure_obs_run_barcodes(rna, "RNA")
@@ -828,6 +868,11 @@ def corr_task(
             X_expr=X_rna,
             report_genes=report_genes,
         )
+        write_plots_artifact(
+            out_dir=out_dir,
+            data_path=results_dir.remote_path,
+            genome=coverages_genome,
+        )
         return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
 
     logging.info(
@@ -914,6 +959,12 @@ def corr_task(
         top_pos_labels=10,
         top_neg_labels=10,
         title="Correlation volcano"
+    )
+
+    write_plots_artifact(
+        out_dir=out_dir,
+        data_path=results_dir.remote_path,
+        genome=coverages_genome,
     )
 
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")

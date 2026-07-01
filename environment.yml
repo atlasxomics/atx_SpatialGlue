@@ -16,6 +16,8 @@ dependencies:
   - scikit-learn=1.1.1
   - matplotlib=3.4.2
   - tqdm=4.64.0
+  - numba=0.56.4
+  - llvmlite=0.39.1
 
   # AnnData / Scanpy ecosystem
   - anndata=0.8.0
@@ -28,7 +30,7 @@ dependencies:
 
   # ---- FIX FOR "iJIT_NotifyEvent" / MKL 2024.x ISSUE ----
   # These pins prevent conda from upgrading MKL to 2024.1+
-  # which is incompatible with PyTorch 1.8.1 and causes:
+  # which has caused:
   #   ImportError: undefined symbol: iJIT_NotifyEvent
   - mkl<2024.1
   - mkl-include<2024.1

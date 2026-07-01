@@ -23,7 +23,7 @@ arg DEBIAN_FRONTEND=noninteractive
 
 # Latch SDK
 # DO NOT REMOVE
-run pip install latch==2.53.10
+run python -m pip install --no-cache-dir latch==2.76.5
 run mkdir /opt/latch
 
 # Install Mambaforge
@@ -128,10 +128,33 @@ run /usr/local/bin/R -e "BiocManager::install(c('BSgenome.Mmusculus.UCSC.mm39', 
 workdir /tmp/docker-build/work/
 
 # Install latch (pyflyte) inside the conda env so serialization sees workflow deps
-run pip install latch==2.53.10
-run pip install SpatialGlue==1.1.5
-run pip install leidenalg==0.10.2
-run pip install snapatac2
+run python -m pip install --no-cache-dir latch==2.76.5
+run printf '%s\n' \
+    'numpy==1.22.3' \
+    'pandas==1.4.2' \
+    'scipy==1.8.1' \
+    'scikit-learn==1.1.1' \
+    'matplotlib==3.4.2' \
+    'anndata==0.8.0' \
+    'scanpy==1.9.1' \
+    'numba==0.56.4' \
+    'llvmlite==0.39.1' \
+    > /opt/latch/pip-constraints.txt
+run python -m pip install --no-cache-dir --constraint /opt/latch/pip-constraints.txt SpatialGlue==1.1.5
+run python -m pip install --no-cache-dir --constraint /opt/latch/pip-constraints.txt leidenalg==0.10.2
+run python -m pip install --no-cache-dir --constraint /opt/latch/pip-constraints.txt snapatac2==2.8.0
+run python -m pip install --no-cache-dir --no-deps https://github.com/atlasxomics/atx-common/archive/refs/tags/v0.1.0.tar.gz
+run mamba install --name spatialglue --yes \
+    numpy=1.22.3 \
+    pandas=1.4.2 \
+    scipy=1.8.1 \
+    scikit-learn=1.1.1 \
+    matplotlib=3.4.2 \
+    anndata=0.8.0 \
+    scanpy=1.9.1 \
+    numba=0.56.4 \
+    llvmlite=0.39.1
+run python -c "import scanpy, numba, llvmlite, snapatac2; from SpatialGlue.preprocess import construct_neighbor_graph; print('scanpy', scanpy.__version__, 'numba', numba.__version__, 'llvmlite', llvmlite.__version__, 'snapatac2', getattr(snapatac2, '__version__', 'unknown'))"
 
 # Copy workflow data (use .dockerignore to skip files)
 copy . /root/
