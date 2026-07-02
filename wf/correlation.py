@@ -6,6 +6,7 @@ import pandas as pd
 import sys
 
 from numpy import ndarray
+from scipy import sparse
 from typing import TYPE_CHECKING, List, Tuple
 
 if TYPE_CHECKING:
@@ -25,7 +26,7 @@ def get_corr_df(
     genes: List[str],
     array1_name: str = "RNA",
     array2_name: str = "GA",
-    chunk_size: int = 1000,
+    chunk_size: int = 250,
 ) -> pd.DataFrame:
     from scipy.stats import rankdata, t
     from statsmodels.stats.multitest import multipletests
@@ -37,8 +38,6 @@ def get_corr_df(
     call per gene.
     """
 
-    array1 = np.asarray(array1)
-    array2 = np.asarray(array2)
     gene_names = pd.Index(genes).astype(str)
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0.")
@@ -61,8 +60,8 @@ def get_corr_df(
 
     for start in range(0, n_genes, chunk_size):
         end = min(start + chunk_size, n_genes)
-        x = array1[:, start:end]
-        y = array2[:, start:end]
+        x = _dense_float32(array1[:, start:end])
+        y = _dense_float32(array2[:, start:end])
 
         x_rank = np.apply_along_axis(rankdata, 0, x).astype(np.float32)
         y_rank = np.apply_along_axis(rankdata, 0, y).astype(np.float32)
@@ -96,14 +95,24 @@ def get_corr_df(
         "spearman_rho": rhos,
         "pval": pvals,
         "qval_bh": qvals,
-        f"mean_{array1_name}": array1.mean(axis=0),
-        f"mean_{array2_name}": array2.mean(axis=0),
+        f"mean_{array1_name}": _colmean(array1),
+        f"mean_{array2_name}": _colmean(array2),
     })
 
     res["abs_rho"] = res["spearman_rho"].abs()
     res = res.sort_values("abs_rho", ascending=False)
 
     return res
+
+
+def _dense_float32(X) -> ndarray:
+    if sparse.issparse(X):
+        return X.toarray().astype(np.float32, copy=False)
+    return np.asarray(X, dtype=np.float32)
+
+
+def _colmean(X) -> ndarray:
+    return np.asarray(X.mean(axis=0)).ravel()
 
 
 def log_norm(array: ndarray, scaleto: int) -> ndarray:
@@ -124,9 +133,9 @@ def synch_adata(adata1: AnnData, adata2: AnnData) -> Tuple[AnnData, AnnData]:
             "Could not find common cells between transcriptome and gene accessibility data; please ensure the input files are from the same experiment."
         )
 
-    adata1 = adata1[common, :].copy()
-    adata2 = adata2[common, :].copy()
-    adata2 = adata2[adata2.obs_names.get_indexer(adata1.obs_names), :].copy()
+    adata1 = adata1[common, :]
+    adata2 = adata2[common, :]
+    adata2 = adata2[adata2.obs_names.get_indexer(adata1.obs_names), :]
     assert (adata1.obs_names == adata2.obs_names).all()
 
     # Align genes

@@ -1,5 +1,6 @@
 import glob
 import json
+import gc
 import logging
 import os
 import pandas as pd
@@ -699,7 +700,7 @@ def peak2gene_task(
     return LatchDir(out_dir, remote_path)
 
 
-@custom_task(cpu=8, memory=384, storage_gib=1000)
+@custom_task(cpu=8, memory=192, storage_gib=1000)
 def corr_task(
     project_name: str,
     results_dir: LatchDir,
@@ -741,10 +742,12 @@ def corr_task(
 
     # Reduce both to common genes/cells and align
     rna_sub, ge_sub = corr.synch_adata(rna, ge)
+    del rna, ge
+    gc.collect()
 
     genes = rna_sub.var_names
 
-    logging.info("Ensuring dense matrix...")
+    logging.info("Selecting matrices for correlation...")
     # Prefer monotonic transform (normalized/log1p/counts layers)
     preferred_layers = ["log1p", "lognorm", "normalized", "counts"]
     X_rna = None
@@ -758,7 +761,7 @@ def corr_task(
                     f"Using RNA layer '{layer}' for correlation"
                 }
             )
-            X_rna = utils.to_dense(rna_sub.layers[layer]).astype(np.float32)
+            X_rna = rna_sub.layers[layer]
             break
     if X_rna is None:  # Fall back to .X with warning
         logging.warning(
@@ -774,19 +777,18 @@ def corr_task(
                 correlations."""
             }
         )
-        X_rna = utils.to_dense(rna_sub.X).astype(np.float32)
-    X_ge = utils.to_dense(ge_sub.X).astype(np.float32)
+        X_rna = rna_sub.X
+    X_ge = ge_sub.X
 
     # Gene stats ------------------------------------------------------------
     X_rna_counts, rna_source = gs.get_rna_counts_matrix(rna_sub)
-    X_rna_counts_dense = utils.to_dense(X_rna_counts).astype(np.float32)
-    mean_umi = X_rna_counts_dense.mean(axis=0)
-    frac_expressing = (X_rna_counts_dense > 0).mean(axis=0)
-    keep = frac_expressing >= float(min_frac_expressing)
-    n_keep = int(keep.sum())
     rna_stats = gs.compute_gene_stats_matrix(
         X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
     )
+    mean_umi = rna_stats["rna_umi_mean"].to_numpy()
+    frac_expressing = rna_stats["rna_umi_detect_rate"].to_numpy()
+    keep = frac_expressing >= float(min_frac_expressing)
+    n_keep = int(keep.sum())
     filter_stats = pd.DataFrame({
         "gene": genes.astype(str).values,
         "corr_mean_umi": mean_umi,
@@ -796,7 +798,7 @@ def corr_task(
     })
 
     ge_stats = gs.compute_gene_stats_matrix(
-        sparse.csr_matrix(X_ge),
+        X_ge,
         genes,
         prefix="ge_norm",
         include_minmax_nonzero=False
@@ -864,7 +866,7 @@ def corr_task(
             out_dir=out_dir,
             rna=rna_sub,
             genes=genes,
-            X_counts=X_rna_counts_dense,
+            X_counts=X_rna_counts,
             X_expr=X_rna,
             report_genes=report_genes,
         )
@@ -927,7 +929,7 @@ def corr_task(
         out_dir=out_dir,
         rna=rna_sub,
         genes=genes,
-        X_counts=X_rna_counts_dense,
+        X_counts=X_rna_counts,
         X_expr=X_rna,
         report_genes=report_genes,
     )
