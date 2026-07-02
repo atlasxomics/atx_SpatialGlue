@@ -4,6 +4,7 @@ import logging
 import sys
 from typing import Optional
 
+from atx_common import Genome
 from latch.resources.workflow import workflow
 from latch.types import LatchDir, LatchFile
 from latch.types.metadata import LatchAuthor, LatchMetadata, LatchParameter
@@ -33,6 +34,7 @@ flow = [
         Params("project_name"),
         Params("wt_anndata"),
         Params("ge_anndata"),
+        Params("coverages_genome"),
         Spoiler(
             "ATAC Data",
             Text(
@@ -129,6 +131,12 @@ metadata = LatchMetadata(
                 typically named 'combined_ge.h5ad'.",
             batch_table_column=True,
         ),
+        "coverages_genome": LatchParameter(
+            display_name="Genome",
+            description="Genome identifier used by the track browser \
+                for coverage tracks, for example hg38, mm10, mm39, or rn6.",
+            batch_table_column=True,
+        ),
         "spatialglue_model_pickle": LatchParameter(
             display_name="Existing SpatialGlue model pickle",
             description="Optional SpatialGlue_model.pickle from a previous \
@@ -186,6 +194,7 @@ def glue_wf(
     project_name: str,
     wt_anndata: LatchFile,
     ge_anndata: LatchFile,
+    coverages_genome: Genome = Genome.hg38,
     atac_anndata: Optional[LatchFile] = None,
     archr_project: Optional[LatchDir] = None,
     peak2gene_archr_project: Optional[LatchDir] = None,
@@ -225,6 +234,7 @@ def glue_wf(
         project_name=project_name,
         results_dir=results,
         ge_anndata=ge_anndata,
+        coverages_genome=coverages_genome,
         min_frac_expressing=min_frac_expressing,
         genes_of_interest=genes_of_interest,
     )

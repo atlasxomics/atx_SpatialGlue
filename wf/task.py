@@ -1,4 +1,5 @@
 import glob
+import json
 import gc
 import logging
 import os
@@ -12,9 +13,18 @@ from typing import Optional
 
 import numpy as np
 
+from scipy import sparse
+
+from atx_common import Genome
 from latch.functions.messages import message
 from latch.resources.tasks import custom_task
 from latch.types import LatchDir, LatchFile
+from latch.types.plots import (
+    PlotsArtifact,
+    PlotsArtifactBindings,
+    PlotsArtifactTemplate,
+    Widget,
+)
 
 import wf.correlation as corr
 from wf.coverage import export_archr_cluster_coverages, export_cluster_coverages
@@ -29,6 +39,36 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+
+def write_plots_artifact(out_dir: str, data_path: str, genome: str) -> None:
+    logging.info("Making Plots Artifact...")
+    artifact = PlotsArtifact(
+        bindings=PlotsArtifactBindings(
+            plot_templates=[
+                PlotsArtifactTemplate(
+                    template_id="1156",
+                    widgets=[
+                        Widget(
+                            transform_id="442179",
+                            key="data_path",
+                            value=data_path,
+                        ),
+                        Widget(
+                            transform_id="442178",
+                            key="coverages_genome",
+                            value=genome,
+                        ),
+                    ],
+                )
+            ]
+        )
+    )
+
+    artifacts_dir = os.path.join(out_dir, "Launch_Plots")
+    os.makedirs(artifacts_dir, exist_ok=True)
+    with open(os.path.join(artifacts_dir, "artifact.json"), "w") as f:
+        json.dump(artifact.asdict(), f, indent=2)
 
 
 @custom_task(cpu=4, memory=576, storage_gib=1000)
@@ -416,6 +456,35 @@ def glue_train_task(
             logging.exception(warning)
             message(typ="warning", data={"title": warning, "body": warning})
 
+    # -------------------- Spatial autocorrelation --------------------
+    if "spatial" in rna_result.obsm:
+        for mod_adata, modality, prefix in [
+            (rna_result, "RNA", "rna"),
+            (ge_result, "GE", "ge"),
+        ]:
+            try:
+                svg_df = utils.run_spatial_autocorr(
+                    mod_adata, n_jobs=4
+                )
+                svg_df.to_csv(
+                    utils.table_path(out_dir, f"svg_{prefix}.csv")
+                )
+                pl.plot_svg_spatial(
+                    mod_adata,
+                    svg_df,
+                    out_dir=out_dir,
+                    filename=f"svg_spatial_{prefix}.png",
+                    modality=modality,
+                    top_n=10,
+                )
+            except Exception as e:
+                warning = f"Spatial autocorrelation failed for {modality}: {e}"
+                logging.exception(warning)
+                message(
+                    typ="warning",
+                    data={"title": f"SVG {modality} failed", "body": warning},
+                )
+
     logging.info("Writing data...")
     for obj in result_objects:
         utils.strip_plotting_embeddings(obj)
@@ -429,7 +498,18 @@ def glue_train_task(
         "sg_cluster",
         "sg_clusters",
     }
-    plotting_obs_drop = {"on_off", "row", "col", "xcor", "ycor", "sample_name"}
+    plotting_obs_drop = {
+        "on_off",
+        "row",
+        "col",
+        "row_x",
+        "col_x",
+        "row_y",
+        "col_y",
+        "xcor",
+        "ycor",
+        "sample_name",
+    }
     ge_plotting = utils.make_plotting_anndata(
         ge_result,
         matrix_dtype=np.float16,
@@ -625,6 +705,7 @@ def corr_task(
     project_name: str,
     results_dir: LatchDir,
     ge_anndata: LatchFile,
+    coverages_genome: Genome,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
@@ -632,6 +713,7 @@ def corr_task(
 
     out_dir = f"/root/{project_name}"
     os.makedirs(out_dir, exist_ok=True)
+    coverages_genome = coverages_genome.value
 
     # Download and read data -----------------------------------------------
     logging.info("Downloading RNA data...")
@@ -788,6 +870,11 @@ def corr_task(
             X_expr=X_rna,
             report_genes=report_genes,
         )
+        write_plots_artifact(
+            out_dir=out_dir,
+            data_path=results_dir.remote_path,
+            genome=coverages_genome,
+        )
         return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
 
     logging.info(
@@ -874,6 +961,12 @@ def corr_task(
         top_pos_labels=10,
         top_neg_labels=10,
         title="Correlation volcano"
+    )
+
+    write_plots_artifact(
+        out_dir=out_dir,
+        data_path=results_dir.remote_path,
+        genome=coverages_genome,
     )
 
     return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
