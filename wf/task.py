@@ -71,6 +71,62 @@ def write_plots_artifact(out_dir: str, data_path: str, genome: str) -> None:
         json.dump(artifact.asdict(), f, indent=2)
 
 
+def _top_svg_payload(svg_df: Optional[pd.DataFrame], top_n: int = 10) -> dict:
+    if svg_df is None or svg_df.empty:
+        return {
+            "genes": np.asarray([], dtype=object),
+            "scores": np.asarray([], dtype=np.float32),
+            "score_name": "I",
+        }
+
+    score_name = "I" if "I" in svg_df.columns else str(svg_df.columns[0])
+    top = svg_df.head(top_n)
+    return {
+        "genes": np.asarray(top.index.astype(str), dtype=object),
+        "scores": top[score_name].astype(float).to_numpy(dtype=np.float32),
+        "score_name": score_name,
+    }
+
+
+def _top_gene_signal_payload(
+    X,
+    gene_names,
+    signal_name: str,
+    signal_source: str,
+    top_n: int = 10,
+) -> dict:
+    totals = np.asarray(X.sum(axis=0)).ravel().astype(float)
+    genes = np.asarray(pd.Index(gene_names).astype(str), dtype=object)
+    if totals.size == 0 or genes.size == 0:
+        order = np.asarray([], dtype=int)
+    else:
+        sortable = np.nan_to_num(totals, nan=-np.inf)
+        order = np.argsort(sortable)[::-1][:top_n]
+
+    return {
+        "genes": genes[order],
+        "values": totals[order].astype(np.float32),
+        "signal_name": signal_name,
+        "signal_source": signal_source,
+    }
+
+
+def _write_plotting_gene_lists(
+    adata,
+    svg_payload: dict,
+    signal_payload: dict,
+) -> None:
+    adata.uns["plotting_top_genes"] = {
+        "top_10_svgs": svg_payload["genes"],
+        "top_10_svg_scores": svg_payload["scores"],
+        "top_10_svg_score_name": svg_payload["score_name"],
+        "top_10_highest_gene_signal": signal_payload["genes"],
+        "top_10_highest_gene_signal_values": signal_payload["values"],
+        "gene_signal_name": signal_payload["signal_name"],
+        "gene_signal_source": signal_payload["signal_source"],
+    }
+
+
 @custom_task(cpu=4, memory=576, storage_gib=1000)
 def glue_preprocess_task(
     project_name: str,
@@ -457,6 +513,10 @@ def glue_train_task(
             message(typ="warning", data={"title": warning, "body": warning})
 
     # -------------------- Spatial autocorrelation --------------------
+    svg_payloads = {
+        "rna": _top_svg_payload(None),
+        "ge": _top_svg_payload(None),
+    }
     if "spatial" in rna_result.obsm:
         for mod_adata, modality, prefix in [
             (rna_result, "RNA", "rna"),
@@ -466,6 +526,7 @@ def glue_train_task(
                 svg_df = utils.run_spatial_autocorr(
                     mod_adata, n_jobs=4
                 )
+                svg_payloads[prefix] = _top_svg_payload(svg_df)
                 svg_df.to_csv(
                     utils.table_path(out_dir, f"svg_{prefix}.csv")
                 )
@@ -491,6 +552,31 @@ def glue_train_task(
 
     if atac_tiles_matched is not None:
         atac_tiles_matched.write(f"{out_dir}/atac_tiles_copro.h5ad")
+
+    try:
+        X_rna_counts, rna_counts_source = gs.get_rna_counts_matrix(rna_result)
+        rna_top_gene_signal = _top_gene_signal_payload(
+            X_rna_counts,
+            rna_result.var_names,
+            signal_name="RNA UMI count",
+            signal_source=rna_counts_source,
+        )
+    except Exception as e:
+        logging.exception("Unable to compute top RNA gene count list: %s", e)
+        rna_top_gene_signal = _top_gene_signal_payload(
+            np.zeros((rna_result.n_obs, 0), dtype=np.float32),
+            [],
+            signal_name="RNA UMI count",
+            signal_source="unavailable",
+        )
+
+    ge_top_gene_signal = _top_gene_signal_payload(
+        ge_result.X,
+        ge_result.var_names,
+        signal_name="gene accessibility score",
+        signal_source="X",
+    )
+
     plotting_categorical_obs_keep = {
         "sample",
         "condition",
@@ -548,6 +634,16 @@ def glue_train_task(
         ge_plotting.obs["RNA_cluster"] = rna_plotting.obs.loc[
             ge_plotting.obs_names, "RNA_cluster"
         ].values
+    _write_plotting_gene_lists(
+        rna_plotting,
+        svg_payload=svg_payloads["rna"],
+        signal_payload=rna_top_gene_signal,
+    )
+    _write_plotting_gene_lists(
+        ge_plotting,
+        svg_payload=svg_payloads["ge"],
+        signal_payload=ge_top_gene_signal,
+    )
     utils.order_plotting_obs_columns(ge_plotting)
     utils.order_plotting_obs_columns(rna_plotting)
 
