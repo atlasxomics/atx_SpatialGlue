@@ -227,12 +227,12 @@ export_archr_group_bigwigs <- function(proj, group_by, target_subdir, required =
 
 candidate_archr_cluster_columns <- function(proj) {
   cell_data <- as.data.frame(getCellColData(proj))
-  cols <- colnames(cell_data)
-  cols <- cols[grepl("cluster|leiden|louvain", tolower(cols))]
-  cols <- cols[!cols %in% c("sg_clusters")]
-  cols <- cols[!grepl("^rna_", cols)]
-  valid <- vapply(cols, function(col) valid_group_values(cell_data[[col]]), logical(1))
-  cols[valid]
+  for (col in c("Clusters", "cluster", "ATAC_cluster")) {
+    if (col %in% colnames(cell_data) && valid_group_values(cell_data[[col]])) {
+      return(col)
+    }
+  }
+  character()
 }
 
 load_project_genome <- function(proj) {
@@ -375,8 +375,8 @@ metadata_targets <- list(
 for (col in valid_metadata_cols) {
   if (col %in% names(metadata_targets)) {
     target_subdir <- metadata_targets[[col]]
-  } else if (grepl("^rna_", col)) {
-    target_subdir <- file.path("RNA_cluster_coverages", sub("^rna_", "", col))
+  } else if (identical(col, "rna_Clusters")) {
+    target_subdir <- "RNA_cluster_coverages"
   } else {
     target_subdir <- file.path("metadata_coverages", safe_name(col))
   }
@@ -394,7 +394,7 @@ if (length(atac_cluster_cols) > 0) {
     proj <- export_archr_group_bigwigs(
       proj,
       group_by = col,
-      target_subdir = file.path("ATAC_cluster_coverages", safe_name(col)),
+      target_subdir = "ATAC_cluster_coverages",
       required = FALSE
     )
   }
@@ -406,7 +406,7 @@ if (!"sample" %in% valid_metadata_cols) {
   copy_archr_group("Sample", "sample_coverages")
 }
 if (!"Clusters" %in% atac_cluster_cols) {
-  copy_archr_group("Clusters", file.path("ATAC_cluster_coverages", "Clusters"))
+  copy_archr_group("Clusters", "ATAC_cluster_coverages")
 }
 
 message("ArchR coverage export complete.")
