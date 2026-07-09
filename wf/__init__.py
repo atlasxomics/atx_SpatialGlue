@@ -206,6 +206,22 @@ def glue_wf(
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
 ) -> LatchDir:
+    """Run SpatialGlue integration and return the project output directory.
+
+    Outputs are written to ``latch:///glue_outs/{project_name}``. The returned
+    directory contains clustered RNA and gene accessibility AnnData files,
+    plotting-optimized AnnData files, the reusable
+    ``SpatialGlue_model.pickle``, cluster sweep tables, marker-gene tables,
+    RNA/ATAC gene-accessibility correlation tables, static QC/spatial figures,
+    and a Latch Plots launch artifact.
+
+    Optional outputs are written under the same project directory. Coverage
+    BigWig tracks are written to ``coverages/`` when either an ATAC tile AnnData
+    or ArchRProject is supplied. ArchR Peak2Gene link tables, BEDPE files, and
+    summaries are written to ``peak2gene/`` when ``peak2gene_archr_project`` is
+    supplied. If these optional stages cannot run, the corresponding
+    subdirectory contains a skip-reason text file.
+    """
 
     prepared = glue_preprocess_task(
         project_name=project_name,
