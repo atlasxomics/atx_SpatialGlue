@@ -42,6 +42,7 @@ flow = [
                 "be either an AnnData h5ad file containing a tile matrix or an"
                 "ArchRProject directory."
             ),
+            Params("generate_coverages"),
             Fork(
                 "epigenomic_input_type",
                 "Choose epigenomic input type",
@@ -137,6 +138,13 @@ metadata = LatchMetadata(
                 for coverage tracks, for example hg38, mm10, mm39, or rn6.",
             batch_table_column=True,
         ),
+        "generate_coverages": LatchParameter(
+            display_name="Generate coverage tracks",
+            description="Turn off to skip coverage track generation even when "
+                "an epigenomic tile AnnData or ArchRProject is supplied. This "
+                "can be turned back on for any later run.",
+            batch_table_column=True,
+        ),
         "spatialglue_model_pickle": LatchParameter(
             display_name="Existing SpatialGlue model pickle",
             description="Optional SpatialGlue_model.pickle from a previous \
@@ -205,6 +213,7 @@ def glue_wf(
     chosen_resolution: float = 0.0,
     min_frac_expressing: float = 0.05,
     genes_of_interest: Optional[str] = None,
+    generate_coverages: bool = True,
 ) -> LatchDir:
     """Run SpatialGlue integration and return the project output directory.
 
@@ -215,12 +224,13 @@ def glue_wf(
     RNA/ATAC gene-accessibility correlation tables, static QC/spatial figures,
     and a Latch Plots launch artifact.
 
-    Optional outputs are written under the same project directory. Coverage
-    BigWig tracks are written to ``coverages/`` when either an ATAC tile AnnData
-    or ArchRProject is supplied. ArchR Peak2Gene link tables, BEDPE files, and
-    summaries are written to ``peak2gene/`` when ``peak2gene_archr_project`` is
-    supplied. If these optional stages cannot run, the corresponding
-    subdirectory contains a skip-reason text file.
+    Optional outputs are written under the same project directory. When
+    ``generate_coverages`` is true, coverage BigWig tracks are written to
+    ``coverages/`` if either an ATAC tile AnnData or ArchRProject is supplied.
+    ArchR Peak2Gene link tables, BEDPE files, and summaries are written to
+    ``peak2gene/`` when ``peak2gene_archr_project`` is supplied. If these
+    optional stages cannot run, the corresponding subdirectory contains a
+    skip-reason text file.
     """
 
     prepared = glue_preprocess_task(
@@ -244,6 +254,7 @@ def glue_wf(
         project_name=project_name,
         results_dir=results,
         archr_project=archr_project,
+        generate_coverages=generate_coverages,
     )
 
     corr_results = corr_task(

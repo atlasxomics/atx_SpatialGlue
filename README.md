@@ -30,7 +30,7 @@ copro_integration_analysis/{project_name}/
 `-- peak2gene/
 ```
 
-Some files and subdirectories are conditional. For example, `atac_tiles_copro.h5ad` is only produced when an epigenomic tile AnnData input is provided, coverage tracks require either ATAC tile data or an ArchRProject, and Peak2Gene links require a Peak2Gene ArchRProject.
+Some files and subdirectories are conditional. For example, `atac_tiles_copro.h5ad` is only produced when an epigenomic tile AnnData input is provided, coverage tracks require either ATAC tile data or an ArchRProject and can be disabled with `generate_coverages`, and Peak2Gene links require a Peak2Gene ArchRProject.
 
 ## Core AnnData and Model Outputs
 
@@ -142,6 +142,14 @@ Coverage export uses ATAC tile AnnData when `atac_anndata` is provided. If no AT
 
 ```text
 coverages/coverage_skipped.txt
+```
+
+Set `generate_coverages` to `False` to explicitly skip this stage. The option
+defaults to `True`, so existing behavior is preserved and coverage generation
+can be restored simply by turning it back on. Disabled runs write:
+
+```text
+coverages/coverage_disabled.txt
 ```
 
 When coverage export runs, the output can include:

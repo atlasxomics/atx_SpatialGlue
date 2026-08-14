@@ -675,11 +675,19 @@ def coverage_task(
     project_name: str,
     results_dir: LatchDir,
     archr_project: Optional[LatchDir] = None,
+    generate_coverages: bool = True,
 ) -> LatchDir:
     import anndata as ad
 
     out_dir = f"/root/{project_name}_coverages"
     os.makedirs(out_dir, exist_ok=True)
+    if not generate_coverages:
+        msg = "Coverage track generation was disabled for this run."
+        logging.info(msg)
+        with open(f"{out_dir}/coverage_disabled.txt", "w") as f:
+            f.write(f"{msg}\n")
+        return LatchDir(out_dir, f"{results_dir.remote_path}/coverages")
+
     coverage_threads = "32"
     os.environ.setdefault("COVERAGE_THREADS", coverage_threads)
     os.environ.setdefault("ARCHR_THREADS", coverage_threads)
