@@ -92,7 +92,7 @@ metadata = LatchMetadata(
     parameters={
         "project_name": LatchParameter(
             display_name="Project Name",
-            description="Name of output directory in glue_outs/",
+            description="Name of output directory in copro_integration_analysis/",
             batch_table_column=True,
         ),
         "atac_anndata": LatchParameter(
@@ -208,7 +208,7 @@ def glue_wf(
 ) -> LatchDir:
     """Run SpatialGlue integration and return the project output directory.
 
-    Outputs are written to ``latch:///glue_outs/{project_name}``. The returned
+    Outputs are written to ``latch:///copro_integration_analysis/{project_name}``. The returned
     directory contains clustered RNA and gene accessibility AnnData files,
     plotting-optimized AnnData files, the reusable
     ``SpatialGlue_model.pickle``, cluster sweep tables, marker-gene tables,
@@ -274,6 +274,6 @@ if __name__ == "__main__":
     from latch.types import LatchDir
     corr_task(
         project_name="D01887_develop",
-        results_dir=LatchDir("latch://13502.account/glue_outs/D01887_00000802"),
+        results_dir=LatchDir("latch://13502.account/copro_integration_analysis/D01887_00000802"),
         ge_anndata=LatchFile("latch://13502.account/snap_outs/Co_pro_D01887_ATAC/combined_ge.h5ad")
     )

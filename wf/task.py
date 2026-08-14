@@ -221,7 +221,7 @@ def glue_preprocess_task(
         "has_atac_tiles": bool(atac_tiles_matched is not None),
     }]).to_csv(f"{out_dir}/prepared_manifest.csv", index=False)
 
-    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}/preprocess")
+    return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}/preprocess")
 
 
 @custom_task(cpu=64, memory=576, storage_gib=1000)
@@ -667,7 +667,7 @@ def glue_train_task(
     if legacy_figures:
         subprocess.run(["mv"] + legacy_figures + [figures_dir], check=False)
 
-    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
+    return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}")
 
 
 @custom_task(cpu=32, memory=192, storage_gib=1000)
@@ -971,7 +971,7 @@ def corr_task(
             data_path=results_dir.remote_path,
             genome=coverages_genome,
         )
-        return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
+        return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}")
 
     logging.info(
         f"Correlation filters retained {n_keep}/{len(genes)} genes "
@@ -1065,4 +1065,4 @@ def corr_task(
         genome=coverages_genome,
     )
 
-    return LatchDir(out_dir, f"latch:///glue_outs/{project_name}")
+    return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}")
