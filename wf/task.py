@@ -127,7 +127,7 @@ def _write_plotting_gene_lists(
     }
 
 
-@custom_task(cpu=4, memory=576, storage_gib=1000)
+@custom_task(cpu=4, memory=384, storage_gib=1000)
 def glue_preprocess_task(
     project_name: str,
     wt_anndata: LatchFile,
@@ -163,6 +163,11 @@ def glue_preprocess_task(
 
     logging.info("Reading gene accessibility AnnData...")
     ge = ad.read_h5ad(ge_anndata.local_path)
+    utils.log_matrix_stats(rna.X, "RNA X")
+    utils.log_matrix_stats(ge.X, "Gene accessibility X")
+    if atac is not None:
+        utils.log_matrix_stats(atac.X, "ATAC tile X")
+    utils.log_peak_memory("loading input AnnData objects")
 
     atac_n_obs = atac.n_obs if atac is not None else "not provided"
     logging.info(f"n_obs RNA: {rna.n_obs} n_obs ATAC tiles: {atac_n_obs} n_obs GE: {ge.n_obs}")
@@ -182,7 +187,13 @@ def glue_preprocess_task(
     rna.var_names_make_unique()
     ge.var_names_make_unique()
 
-    rna_matched, ge_matched, atac_tiles_matched = utils.align_modalities(rna, ge, atac)
+    rna_matched, ge_matched, atac_tiles_matched = utils.align_modalities(
+        rna, ge, atac, inplace=True
+    )
+    # The matched names intentionally point at the same, now-subset objects.
+    # Remove the extra local references before allocating LSI workspaces.
+    del rna, ge, atac
+    gc.collect()
     if atac_tiles_matched is None:
         logging.info(f"Matched barcodes across RNA/GE: {rna_matched.n_obs} spots")
     else:
@@ -190,27 +201,32 @@ def glue_preprocess_task(
             "Matched barcodes across RNA/GE/ATAC tiles: "
             f"{rna_matched.n_obs} spots"
         )
+    utils.log_peak_memory("aligning modalities")
 
     # -------------------- GE cleanup + LSI --------------------
     logging.info("Cleaning gene accessibility AnnData...")
-    if hasattr(ge_matched.X, "tocsr"):
-        ge_matched.X = ge_matched.X.tocsr()
-
-    ge_sums = np.array(ge_matched.X.sum(axis=0)).ravel()
+    ge_sums = np.asarray(ge_matched.X.sum(axis=0)).ravel()
 
     keep_var = ge_sums > 0
     if (~keep_var).sum():
-        print(f"Dropping {(~keep_var).sum()} zero-signal GE features")
-        ge_matched = ge_matched[:, keep_var].copy()
+        logging.info(
+            "Ignoring %d zero-signal GE features during LSI; retaining them "
+            "in the AnnData avoids another full-object copy.",
+            int((~keep_var).sum()),
+        )
+    del ge_sums, keep_var
 
     logging.info("LSI on gene accessibility AnnData...")
-    ge_matched.obsm["X_lsi"] = utils.compute_lsi(ge_matched.X)
-    ge_matched.obsm["feat"] = ge_matched.obsm["X_lsi"].astype("float32")
+    ge_lsi = utils.compute_lsi(ge_matched.X)
+    ge_matched.obsm["X_lsi"] = ge_lsi
+    ge_matched.obsm["feat"] = ge_lsi
     logging.info(f"GE SpatialGlue features: {ge_matched.obsm['feat'].shape}")
+    utils.log_peak_memory("gene accessibility LSI")
 
     # -------------------- RNA features with HVG guard ------------------
     logging.info("Adding feat to WT AnnData...")
     utils.add_rna_features(rna_matched)
+    utils.log_peak_memory("RNA feature extraction")
 
     logging.info("Writing prepared SpatialGlue inputs...")
     rna_matched.write(f"{out_dir}/rna_prepared.h5ad")
@@ -234,10 +250,11 @@ def glue_train_task(
     chosen_resolution: float = 0.0,
     spatialglue_model_pickle: Optional[LatchFile] = None,
 ) -> LatchDir:
+    import anndata as ad
     import scanpy as sc
     import torch
+    import SpatialGlue.SpatialGlue_pyG as spatialglue_pyg
     from SpatialGlue.preprocess import construct_neighbor_graph
-    from SpatialGlue.SpatialGlue_pyG import Train_SpatialGlue
 
     # ------------------ Initialize ---------------------
     logging.info("Starting glue training task...")
@@ -272,16 +289,14 @@ def glue_train_task(
 
     rna_matched = sc.read_h5ad(rna_prepared_path)
     ge_matched = sc.read_h5ad(ge_prepared_path)
-    atac_tiles_matched = (
-        sc.read_h5ad(atac_tiles_prepared_path)
-        if atac_tiles_prepared_path is not None
-        else None
-    )
-    atac_shape = atac_tiles_matched.shape if atac_tiles_matched is not None else "not provided"
+    # ATAC tiles are not consumed by SpatialGlue training. Load them only when
+    # cluster annotations are ready to be copied into the final output.
+    atac_shape = "deferred" if atac_tiles_prepared_path is not None else "not provided"
     logging.info(
         f"Prepared inputs loaded: RNA {rna_matched.shape}, GE {ge_matched.shape}, "
         f"ATAC tiles {atac_shape}"
     )
+    utils.log_peak_memory("loading SpatialGlue training inputs")
 
     # -------------------- Train or load SpatialGlue --------------------
     if spatialglue_model_pickle is not None:
@@ -296,8 +311,8 @@ def glue_train_task(
                 "spatialglue_model_pickle must contain a dict with a "
                 "'SpatialGlue' embedding, as written by this workflow."
             )
-        rna_result = rna_matched.copy()
-        ge_result = ge_matched.copy()
+        rna_result = rna_matched
+        ge_result = ge_matched
     else:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -305,19 +320,38 @@ def glue_train_task(
         data = construct_neighbor_graph(
             rna_matched, ge_matched, datatype="Spatial-epigenome-transcriptome"
         )
+        utils.log_peak_memory("constructing SpatialGlue neighbor graphs")
 
         logging.info("Train_SpatialGlue...")
-        model = Train_SpatialGlue(
+        # SpatialGlue 1.1.5 densifies all four n_obs-by-n_obs adjacency matrices
+        # in its constructor. Replace that module-level hook with an equivalent
+        # sparse implementation before instantiating the trainer.
+        spatialglue_pyg.adjacent_matrix_preprocessing = (
+            utils.spatialglue_sparse_adjacency_preprocessing
+        )
+        model = spatialglue_pyg.Train_SpatialGlue(
             data,
             datatype="Spatial-epigenome-transcriptome",
             random_seed=utils.SEED,
             device=device,
         )
+        utils.log_peak_memory("initializing the SpatialGlue model")
         logging.info("training...")
         out = model.train()
 
         rna_result = data["adata_omics1"]
         ge_result = data["adata_omics2"]
+        # The graph tensors and the trainer's last autograd graph are not needed
+        # downstream. Release them before UMAP, marker, and plotting allocations.
+        del model, data
+        for obj in (rna_result, ge_result):
+            obj.uns.pop("adj_spatial", None)
+            if "adj_feature" in obj.obsm:
+                del obj.obsm["adj_feature"]
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        utils.log_peak_memory("releasing SpatialGlue training graphs")
 
     out["SpatialGlue"] = utils.to_numpy_array(out["SpatialGlue"])
     for key in ["alpha", "alpha_omics1", "alpha_omics2"]:
@@ -332,8 +366,12 @@ def glue_train_task(
         )
 
     # Collect embeddings/weights on an AnnData for downstream analysis
-    logging.info("copy data...")
-    adata = rna_result.copy()
+    logging.info("Building lightweight clustering AnnData...")
+    # Clustering needs observation metadata, spatial coordinates, and the joint
+    # embedding—not a duplicate of every RNA matrix and layer.
+    adata = ad.AnnData(obs=rna_result.obs.copy())
+    if "spatial" in rna_result.obsm:
+        adata.obsm["spatial"] = np.asarray(rna_result.obsm["spatial"]).copy()
     adata.obsm["SpatialGlue"] = out["SpatialGlue"]
     adata.obsm["alpha"] = out.get("alpha")
     adata.obsm["alpha_omics1"] = out.get("alpha_omics1")
@@ -467,8 +505,6 @@ def glue_train_task(
     # -------------------- Save data --------------------
     # Copy new clustering results
     result_objects = [rna_result, ge_result]
-    if atac_tiles_matched is not None:
-        result_objects.append(atac_tiles_matched)
     for obj in result_objects:
         for old_key in ["sg_leiden", "sg_leiden_merged", "sg_merged_leiden"]:
             if old_key in obj.obs.columns:
@@ -550,8 +586,23 @@ def glue_train_task(
     for obj in result_objects:
         utils.strip_plotting_embeddings(obj)
 
-    if atac_tiles_matched is not None:
+    if atac_tiles_prepared_path is not None:
+        logging.info("Reading deferred ATAC tile AnnData...")
+        atac_tiles_matched = sc.read_h5ad(atac_tiles_prepared_path)
+        for old_key in ["sg_leiden", "sg_leiden_merged", "sg_merged_leiden"]:
+            if old_key in atac_tiles_matched.obs.columns:
+                del atac_tiles_matched.obs[old_key]
+        for key in cluster_result_keys:
+            if key in adata.obs.columns:
+                values = adata.obs.loc[atac_tiles_matched.obs_names, key]
+                atac_tiles_matched.obs[key] = values.astype(str).values
+                atac_tiles_matched.obs[key] = atac_tiles_matched.obs[key].astype(
+                    "category"
+                )
+        utils.strip_plotting_embeddings(atac_tiles_matched)
         atac_tiles_matched.write(f"{out_dir}/atac_tiles_copro.h5ad")
+        del atac_tiles_matched
+        gc.collect()
 
     try:
         X_rna_counts, rna_counts_source = gs.get_rna_counts_matrix(rna_result)
@@ -652,7 +703,7 @@ def glue_train_task(
     ge_result.write(f"{out_dir}/atac_gs_copro.h5ad")
     rna_result.write(f"{out_dir}/rna_copro.h5ad")
     pd.DataFrame([{
-        "has_atac_tiles": bool(atac_tiles_matched is not None),
+        "has_atac_tiles": bool(atac_tiles_prepared_path is not None),
         "rna_full_h5ad": "rna_copro.h5ad",
         "rna_plotting_h5ad": "rna_copro_sm.h5ad",
         "ge_full_h5ad": "atac_gs_copro.h5ad",
@@ -670,7 +721,7 @@ def glue_train_task(
     return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}")
 
 
-@custom_task(cpu=32, memory=192, storage_gib=1000)
+@custom_task(cpu=32, memory=126, storage_gib=1000)
 def coverage_task(
     project_name: str,
     results_dir: LatchDir,
@@ -804,7 +855,7 @@ def peak2gene_task(
     return LatchDir(out_dir, remote_path)
 
 
-@custom_task(cpu=8, memory=192, storage_gib=1000)
+@custom_task(cpu=8, memory=256, storage_gib=1000)
 def corr_task(
     project_name: str,
     results_dir: LatchDir,
@@ -844,19 +895,25 @@ def corr_task(
     rna.var_names_make_unique()
     ge.var_names_make_unique()
 
-    # Reduce both to common genes/cells and align
-    rna_sub, ge_sub = corr.synch_adata(rna, ge)
-    del rna, ge
-    gc.collect()
-
-    genes = rna_sub.var_names
+    # Keep row/column index maps instead of copying synchronized AnnData objects
+    # and all of their layers. Lightweight metadata objects support reports;
+    # IndexedMatrix materializes only each requested gene chunk.
+    alignment = corr.alignment_indexers(rna, ge)
+    rna_sub = corr.aligned_metadata(rna, alignment.rna_obs, alignment.rna_var)
+    ge_sub = corr.aligned_metadata(ge, alignment.ge_obs, alignment.ge_var)
+    genes = alignment.genes
+    logging.info(
+        "Aligned correlation inputs: %d observations, %d genes",
+        len(alignment.obs_names),
+        len(genes),
+    )
 
     logging.info("Selecting matrices for correlation...")
     # Prefer monotonic transform (normalized/log1p/counts layers)
     preferred_layers = ["log1p", "lognorm", "normalized", "counts"]
     X_rna = None
     for layer in preferred_layers:
-        if layer in rna_sub.layers:
+        if layer in rna.layers:
             logging.info(f"Using RNA layer '{layer}' for correlation")
             message(
                 typ="info",
@@ -865,11 +922,13 @@ def corr_task(
                     f"Using RNA layer '{layer}' for correlation"
                 }
             )
-            X_rna = rna_sub.layers[layer]
+            X_rna = corr.IndexedMatrix(
+                rna.layers[layer], alignment.rna_obs, alignment.rna_var
+            )
             break
     if X_rna is None:  # Fall back to .X with warning
         logging.warning(
-            "RNA layers normalized/log1p/counts not found; using rna_sub.X"
+            "RNA layers normalized/log1p/counts not found; using RNA .X"
         )
         message(
             typ="warning",
@@ -881,14 +940,34 @@ def corr_task(
                 correlations."""
             }
         )
-        X_rna = rna_sub.X
-    X_ge = ge_sub.X
+        X_rna = corr.IndexedMatrix(rna.X, alignment.rna_obs, alignment.rna_var)
+    X_ge = corr.IndexedMatrix(ge.X, alignment.ge_obs, alignment.ge_var)
 
     # Gene stats ------------------------------------------------------------
-    X_rna_counts, rna_source = gs.get_rna_counts_matrix(rna_sub)
+    X_rna_counts, rna_source = corr.indexed_rna_counts(rna, alignment)
+    del rna, ge, alignment
+    gc.collect()
+    utils.log_peak_memory("preparing indexed correlation inputs")
+
+    # The retained matrices are accessed gene-by-gene for statistics,
+    # correlation, and reports. One CSC conversion avoids rescanning every CSR
+    # row for each chunk while keeping storage linear in the number of nonzeros.
+    column_cache = {}
+    X_ge = corr.optimize_indexed_matrix_columns(X_ge, column_cache)
+    gc.collect()
+    utils.log_peak_memory("converting GE correlation source to CSC")
+    X_rna = corr.optimize_indexed_matrix_columns(X_rna, column_cache)
+    X_rna_counts = corr.optimize_indexed_matrix_columns(
+        X_rna_counts, column_cache
+    )
+    del column_cache
+    gc.collect()
+    utils.log_peak_memory("converting RNA correlation sources to CSC")
+
     rna_stats = gs.compute_gene_stats_matrix(
         X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
     )
+    utils.log_peak_memory("computing RNA correlation gene statistics")
     mean_umi = rna_stats["rna_umi_mean"].to_numpy()
     frac_expressing = rna_stats["rna_umi_detect_rate"].to_numpy()
     keep = frac_expressing >= float(min_frac_expressing)
@@ -907,6 +986,7 @@ def corr_task(
         prefix="ge_norm",
         include_minmax_nonzero=False
     )
+    utils.log_peak_memory("computing GE correlation gene statistics")
 
     # Merge all stats before correlation so the workflow still produces a
     # useful QC table if all genes fail the correlation filters.
@@ -987,7 +1067,13 @@ def corr_task(
     )
 
     logging.info("Computing correlations...")
-    res = corr.get_corr_df(X_rna[:, keep], X_ge[:, keep], genes[keep])
+    res = corr.get_corr_df(
+        X_rna.select_columns(keep),
+        X_ge.select_columns(keep),
+        genes[keep],
+        n_jobs=8,
+    )
+    utils.log_peak_memory("computing chunked Spearman correlations")
     res.to_csv(res_path, index=False)
     logging.info(f"Saved Spearman results: {res_path}")
 
@@ -1019,6 +1105,7 @@ def corr_task(
     pl.plot_correlation_overview(corr_with_filter, overview_path)
 
     report_genes = pl.selected_report_genes(genes_of_interest, genes, res)
+    logging.info("Writing spatial expression reports...")
     pl.write_spatial_expression_reports(
         out_dir=out_dir,
         rna=rna_sub,
@@ -1028,7 +1115,9 @@ def corr_task(
         X_ge=X_ge,
         report_genes=report_genes,
     )
+    logging.info("Writing spatial cluster reports...")
     pl.write_spatial_cluster_reports(out_dir, rna_sub, ge_sub)
+    logging.info("Writing per-cluster UMI reports...")
     pl.write_umi_reports(
         out_dir=out_dir,
         rna=rna_sub,
@@ -1038,6 +1127,7 @@ def corr_task(
         report_genes=report_genes,
     )
 
+    logging.info("Writing per-cluster RNA/ATAC correlation outputs...")
     pl.write_cluster_correlation_outputs(
         out_dir=out_dir,
         rna=rna_sub,

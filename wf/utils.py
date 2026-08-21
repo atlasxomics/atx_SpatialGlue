@@ -4,6 +4,8 @@ import logging
 import math
 import os
 import re
+import resource
+import sys
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -831,40 +833,203 @@ def choose_n_components(n_obs: int, n_vars: int, requested: int) -> int:
     return n_components
 
 
-def as_float32_csr(X):
+def _format_bytes(n_bytes: float) -> str:
+    value = float(n_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.2f} {unit}"
+        value /= 1024
+
+
+def log_peak_memory(context: str) -> None:
+    """Log process peak RSS without adding a runtime dependency."""
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB; macOS reports bytes.
+    max_rss_bytes = max_rss if sys.platform == "darwin" else max_rss * 1024
+    logging.info("Memory after %s: peak RSS %s", context, _format_bytes(max_rss_bytes))
+
+
+def log_matrix_stats(X, context: str) -> None:
+    """Log representation and storage information without materializing X."""
+    shape = getattr(X, "shape", None)
+    dtype = getattr(X, "dtype", None)
+    if sparse.issparse(X):
+        nnz = int(X.nnz)
+        total = int(shape[0]) * int(shape[1])
+        density = nnz / total if total else 0.0
+        storage = X.data.nbytes + X.indices.nbytes + X.indptr.nbytes
+        logging.info(
+            "%s matrix: %s shape=%s dtype=%s nnz=%d density=%.4f%% storage=%s",
+            context,
+            type(X).__name__,
+            shape,
+            dtype,
+            nnz,
+            density * 100,
+            _format_bytes(storage),
+        )
+    else:
+        storage = getattr(X, "nbytes", None)
+        storage_text = _format_bytes(storage) if storage is not None else "unknown"
+        logging.info(
+            "%s matrix: %s shape=%s dtype=%s storage=%s",
+            context,
+            type(X).__name__,
+            shape,
+            dtype,
+            storage_text,
+        )
+
+
+def _spatialglue_edge_table_to_csr(edges, n_obs: int):
+    """Convert SpatialGlue's x/y/value edge table without inferring its shape."""
+    rows = np.asarray(edges["x"], dtype=np.int64)
+    cols = np.asarray(edges["y"], dtype=np.int64)
+    values = np.asarray(edges["value"], dtype=np.float32)
+    if rows.size and (
+        rows.min() < 0
+        or cols.min() < 0
+        or rows.max() >= n_obs
+        or cols.max() >= n_obs
+    ):
+        raise ValueError("SpatialGlue adjacency contains an out-of-range node index.")
+    return sparse.csr_matrix((values, (rows, cols)), shape=(n_obs, n_obs))
+
+
+def spatialglue_normalize_sparse_adjacency(adjacency, n_obs: int):
+    """Symmetrize and normalize a SpatialGlue graph using sparse matrices only."""
+    from sklearn.utils.sparsefuncs import (
+        inplace_csr_column_scale,
+        inplace_csr_row_scale,
+    )
+
+    if isinstance(adjacency, pd.DataFrame):
+        adj = _spatialglue_edge_table_to_csr(adjacency, n_obs)
+    elif sparse.issparse(adjacency):
+        if adjacency.shape != (n_obs, n_obs):
+            raise ValueError(
+                f"Expected a {(n_obs, n_obs)} adjacency; got {adjacency.shape}."
+            )
+        adj = as_float32_csr(adjacency, copy=True)
+    else:
+        raise TypeError(
+            "SpatialGlue adjacency must be a scipy sparse matrix or edge table."
+        )
+
+    # This is equivalent to SpatialGlue's dense A + A.T followed by clipping at
+    # one. Keep it CSR throughout so storage remains proportional to edge count.
+    adj = (adj + adj.T).tocsr()
+    if adj.data.size:
+        np.minimum(adj.data, np.float32(1), out=adj.data)
+    adj.eliminate_zeros()
+    adj = (adj + sparse.eye(n_obs, dtype=np.float32, format="csr")).tocsr()
+
+    degree = np.asarray(adj.sum(axis=1)).ravel()
+    inv_sqrt_degree = np.zeros_like(degree, dtype=np.float32)
+    nonzero = degree > 0
+    inv_sqrt_degree[nonzero] = np.power(degree[nonzero], -0.5).astype(np.float32)
+    inplace_csr_row_scale(adj, inv_sqrt_degree)
+    inplace_csr_column_scale(adj, inv_sqrt_degree)
+    return adj
+
+
+def _scipy_csr_to_torch_sparse(adjacency):
+    import torch
+
+    coo = adjacency.tocoo().astype(np.float32, copy=False)
+    indices = torch.from_numpy(
+        np.vstack((coo.row, coo.col)).astype(np.int64, copy=False)
+    )
+    values = torch.from_numpy(coo.data)
+    return torch.sparse_coo_tensor(indices, values, coo.shape).coalesce()
+
+
+def spatialglue_sparse_adjacency_preprocessing(adata_omics1, adata_omics2):
+    """Sparse replacement for SpatialGlue 1.1.5 adjacency preprocessing.
+
+    Upstream densifies four n_obs-by-n_obs graphs before immediately converting
+    them back to sparse tensors. At large spot counts those temporary matrices
+    require hundreds of GiB. This function preserves the same graph operations
+    while keeping memory proportional to the number of edges.
+    """
+    graph_specs = {
+        "adj_spatial_omics1": (adata_omics1.uns["adj_spatial"], adata_omics1.n_obs),
+        "adj_spatial_omics2": (adata_omics2.uns["adj_spatial"], adata_omics2.n_obs),
+        "adj_feature_omics1": (adata_omics1.obsm["adj_feature"], adata_omics1.n_obs),
+        "adj_feature_omics2": (adata_omics2.obsm["adj_feature"], adata_omics2.n_obs),
+    }
+    result = {}
+    for name, (adjacency, n_obs) in graph_specs.items():
+        normalized = spatialglue_normalize_sparse_adjacency(adjacency, n_obs)
+        logging.info(
+            "%s: shape=%s nnz=%d sparse storage=%s",
+            name,
+            normalized.shape,
+            normalized.nnz,
+            _format_bytes(
+                normalized.data.nbytes
+                + normalized.indices.nbytes
+                + normalized.indptr.nbytes
+            ),
+        )
+        result[name] = _scipy_csr_to_torch_sparse(normalized)
+    return result
+
+
+def as_float32_csr(X, copy: bool = True):
     """Convert AnnData matrix-like inputs to numeric CSR without dtype ambiguity."""
     if sparse.issparse(X):
-        out = X.tocsr().astype(np.float32)
+        if sparse.isspmatrix_csr(X) and X.dtype != np.float32:
+            # Building the converted CSR directly avoids a full-size float64
+            # CSR temporary followed by a second float32 CSR allocation.
+            out = sparse.csr_matrix(
+                (
+                    X.data.astype(np.float32, copy=True),
+                    X.indices.copy(),
+                    X.indptr.copy(),
+                ),
+                shape=X.shape,
+            )
+        else:
+            out = X.tocsr(copy=copy).astype(np.float32, copy=False)
     elif hasattr(X, "to_memory"):
         X_mem = X.to_memory()
         if sparse.issparse(X_mem):
-            out = X_mem.tocsr().astype(np.float32)
+            out = X_mem.tocsr(copy=copy).astype(np.float32, copy=False)
         else:
             out = sparse.csr_matrix(np.asarray(X_mem, dtype=np.float32))
     else:
         out = sparse.csr_matrix(np.asarray(X, dtype=np.float32))
 
+    out.sum_duplicates()
+    out.eliminate_zeros()
     if out.data.size:
-        out.data = np.nan_to_num(out.data, nan=0.0, posinf=0.0, neginf=0.0)
+        np.nan_to_num(out.data, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
     return out
 
 
 def compute_lsi(X, n_components: int = N_COMPONENTS, seed: int = SEED) -> np.ndarray:
     from sklearn.decomposition import TruncatedSVD
+    from sklearn.utils.sparsefuncs import (
+        inplace_csr_column_scale,
+        inplace_csr_row_scale,
+    )
 
     """Compute TF-IDF + log1p + SVD LSI, dropping the first depth component."""
-    X_raw = as_float32_csr(X)
-    X_tfidf = X_raw.copy()
+    # Keep one float32 working copy. In particular, avoid retaining separate raw,
+    # TF-IDF, COO, and CSC matrices at the same time.
+    X_tfidf = as_float32_csr(X, copy=True)
 
     row_sums = np.asarray(X_tfidf.sum(axis=1)).ravel()
     row_sums[row_sums == 0] = 1
-    X_tfidf = X_tfidf.multiply(1.0 / row_sums[:, None])
+    inplace_csr_row_scale(X_tfidf, (1.0 / row_sums).astype(np.float32))
 
-    col_nnz = np.diff(X_raw.tocsc().indptr)
-    idf = np.log1p(X_raw.shape[0] / (col_nnz + 1))
-    X_tfidf = X_tfidf.multiply(idf)
-    X_tfidf = X_tfidf.multiply(1e4)
-    X_tfidf.data = np.log1p(X_tfidf.data)
+    # CSR column indices provide document frequencies without a full CSC copy.
+    col_nnz = np.bincount(X_tfidf.indices, minlength=X_tfidf.shape[1])
+    idf = np.log1p(X_tfidf.shape[0] / (col_nnz + 1)).astype(np.float32)
+    inplace_csr_column_scale(X_tfidf, idf)
+    X_tfidf.data *= np.float32(1e4)
+    np.log1p(X_tfidf.data, out=X_tfidf.data)
 
     n_svd = choose_n_components(
         X_tfidf.shape[0], X_tfidf.shape[1], n_components + 1
@@ -895,28 +1060,48 @@ def add_rna_features(rna, n_components: int = N_COMPONENTS) -> None:
         logging.warning("RNA highly_variable column not found; using all RNA genes.")
         hvgs = np.ones(rna.n_vars, dtype=bool)
 
-    rna_hvg = rna[:, hvgs].copy()
     for layer in ["lognorm", "normalized", "log1p"]:
-        if layer in rna_hvg.layers:
+        if layer in rna.layers:
             logging.info(f"Using RNA layer '{layer}' for SpatialGlue features.")
-            X = rna_hvg.layers[layer]
+            X = rna.layers[layer][:, hvgs]
             break
     else:
-        if "counts" in rna_hvg.layers:
-            from wf import correlation as corr
-
+        if "counts" in rna.layers:
             logging.info(
                 "RNA log-normalized layer not found; computing lognorm from counts."
             )
-            X = corr.log_norm(to_dense(rna_hvg.layers["counts"]), scaleto=10000)
+            X = rna.layers["counts"][:, hvgs]
+            if sparse.issparse(X):
+                from sklearn.utils.sparsefuncs import inplace_csr_row_scale
+
+                X = as_float32_csr(X, copy=False)
+                row_sums = np.asarray(X.sum(axis=1)).ravel()
+                row_sums[row_sums < 1] = 1
+                inplace_csr_row_scale(X, (10000.0 / row_sums).astype(np.float32))
+                np.log1p(X.data, out=X.data)
+            else:
+                X = np.asarray(X, dtype=np.float32)
+                row_sums = X.sum(axis=1, keepdims=True)
+                row_sums[row_sums < 1] = 1
+                X /= row_sums
+                X *= np.float32(10000)
+                np.log1p(X, out=X)
         else:
             logging.warning(
                 "RNA log-normalized/counts layers not found; using RNA .X."
             )
-            X = rna_hvg.X
+            X = rna.X[:, hvgs]
 
-    X = to_dense(X).astype(np.float32)
-    X_scaled = StandardScaler().fit_transform(X)
+    if sparse.issparse(X):
+        X = as_float32_csr(X, copy=False)
+        # Centering a sparse matrix would allocate n_obs * n_vars dense values.
+        # Variance scaling followed by TruncatedSVD provides bounded-memory RNA
+        # features and is the standard sparse analogue of the previous PCA path.
+        X_scaled = StandardScaler(with_mean=False, copy=False).fit_transform(X)
+    else:
+        X_scaled = np.asarray(X, dtype=np.float32)
+        np.nan_to_num(X_scaled, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        X_scaled = StandardScaler(copy=False).fit_transform(X_scaled)
     n_svd = choose_n_components(X_scaled.shape[0], X_scaled.shape[1], n_components)
     rna.obsm["feat"] = TruncatedSVD(
         n_components=n_svd, random_state=SEED
@@ -924,10 +1109,13 @@ def add_rna_features(rna, n_components: int = N_COMPONENTS) -> None:
     logging.info(f"RNA SpatialGlue features: {rna.obsm['feat'].shape}")
 
 
-def align_modalities(rna, ge, atac=None):
-    common = rna.obs_names.intersection(ge.obs_names)
+def align_modalities(rna, ge, atac=None, inplace: bool = False):
+    # Preserve RNA order explicitly. Index.intersection sorting behavior differs
+    # across the pandas versions used locally and in the workflow image.
+    keep = rna.obs_names.isin(ge.obs_names)
     if atac is not None:
-        common = common.intersection(atac.obs_names)
+        keep &= rna.obs_names.isin(atac.obs_names)
+    common = rna.obs_names[keep]
     if len(common) == 0:
         if atac is None:
             raise RuntimeError(
@@ -939,17 +1127,29 @@ def align_modalities(rna, ge, atac=None):
             "accessibility, and ATAC tile data."
         )
 
-    rna_matched = rna[common, :].copy()
-    ge_matched = ge[common, :].copy()
-    atac_matched = atac[common, :].copy() if atac is not None else None
+    rna_indexer = rna.obs_names.get_indexer(common)
+    ge_indexer = ge.obs_names.get_indexer(common)
+    atac_indexer = atac.obs_names.get_indexer(common) if atac is not None else None
+    if (ge_indexer < 0).any() or (
+        atac_indexer is not None and (atac_indexer < 0).any()
+    ):
+        raise RuntimeError("Internal error while aligning modality observation IDs.")
 
-    ge_matched = ge_matched[
-        ge_matched.obs_names.get_indexer(rna_matched.obs_names), :
-    ].copy()
-    if atac_matched is not None:
-        atac_matched = atac_matched[
-            atac_matched.obs_names.get_indexer(rna_matched.obs_names), :
-        ].copy()
+    if inplace:
+        # AnnData has no public in-place subsetting API. These stable internal
+        # methods replace each object's arrays one modality at a time, avoiding
+        # multiple whole-object copies being live simultaneously.
+        rna._inplace_subset_obs(rna_indexer)
+        ge._inplace_subset_obs(ge_indexer)
+        if atac is not None:
+            atac._inplace_subset_obs(atac_indexer)
+        rna_matched, ge_matched, atac_matched = rna, ge, atac
+    else:
+        # Retain non-mutating behavior for utility callers, but copy each object
+        # only once and directly into RNA order.
+        rna_matched = rna[rna_indexer, :].copy()
+        ge_matched = ge[ge_indexer, :].copy()
+        atac_matched = atac[atac_indexer, :].copy() if atac is not None else None
 
     assert (rna_matched.obs_names == ge_matched.obs_names).all()
     if atac_matched is not None:
