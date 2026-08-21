@@ -84,7 +84,7 @@ def compute_gene_stats_matrix(
     gene_names,
     prefix: str,
     include_minmax_nonzero: bool = True,
-    chunk_size: int = 64,
+    chunk_size: int = 256,
 ) -> pd.DataFrame:
     """Compute gene-level stats while materializing at most one gene chunk."""
     if chunk_size <= 0:

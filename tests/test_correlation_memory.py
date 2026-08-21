@@ -88,7 +88,9 @@ def test_indexed_chunked_correlations_match_materialized_matrices():
     y = corr.IndexedMatrix(y_base, rows, y_cols)
     genes = pd.Index(["g1", "g2", "g3"])
 
-    indexed = corr.get_corr_df(x, y, genes, chunk_size=2).sort_values("gene")
+    indexed = corr.get_corr_df(
+        x, y, genes, chunk_size=2, n_jobs=2
+    ).sort_values("gene")
     materialized = corr.get_corr_df(
         x_base[rows, :][:, x_cols],
         y_base[rows, :][:, y_cols],
@@ -97,6 +99,27 @@ def test_indexed_chunked_correlations_match_materialized_matrices():
     ).sort_values("gene")
 
     pd.testing.assert_frame_equal(indexed, materialized)
+
+
+def test_column_optimization_reuses_csc_source_and_preserves_values():
+    base = sparse.csr_matrix(
+        [[0, 1, 2], [3, 0, 4], [0, 5, 0]], dtype=np.float32
+    )
+    first = corr.IndexedMatrix(base, [2, 0], [2, 1])
+    second = corr.IndexedMatrix(base, [1, 2], [0, 2])
+    cache = {}
+
+    first_optimized = corr.optimize_indexed_matrix_columns(first, cache)
+    second_optimized = corr.optimize_indexed_matrix_columns(second, cache)
+
+    assert sparse.isspmatrix_csc(first_optimized.matrix)
+    assert first_optimized.matrix is second_optimized.matrix
+    np.testing.assert_array_equal(
+        first_optimized[:, :].toarray(), first[:, :].toarray()
+    )
+    np.testing.assert_array_equal(
+        second_optimized[:, :].toarray(), second[:, :].toarray()
+    )
 
 
 def test_chunked_gene_stats_match_materialized_input():

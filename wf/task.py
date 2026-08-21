@@ -948,6 +948,22 @@ def corr_task(
     del rna, ge, alignment
     gc.collect()
     utils.log_peak_memory("preparing indexed correlation inputs")
+
+    # The retained matrices are accessed gene-by-gene for statistics,
+    # correlation, and reports. One CSC conversion avoids rescanning every CSR
+    # row for each chunk while keeping storage linear in the number of nonzeros.
+    column_cache = {}
+    X_ge = corr.optimize_indexed_matrix_columns(X_ge, column_cache)
+    gc.collect()
+    utils.log_peak_memory("converting GE correlation source to CSC")
+    X_rna = corr.optimize_indexed_matrix_columns(X_rna, column_cache)
+    X_rna_counts = corr.optimize_indexed_matrix_columns(
+        X_rna_counts, column_cache
+    )
+    del column_cache
+    gc.collect()
+    utils.log_peak_memory("converting RNA correlation sources to CSC")
+
     rna_stats = gs.compute_gene_stats_matrix(
         X_rna_counts, genes, prefix="rna_umi", include_minmax_nonzero=True
     )
@@ -1055,6 +1071,7 @@ def corr_task(
         X_rna.select_columns(keep),
         X_ge.select_columns(keep),
         genes[keep],
+        n_jobs=8,
     )
     utils.log_peak_memory("computing chunked Spearman correlations")
     res.to_csv(res_path, index=False)
@@ -1088,6 +1105,7 @@ def corr_task(
     pl.plot_correlation_overview(corr_with_filter, overview_path)
 
     report_genes = pl.selected_report_genes(genes_of_interest, genes, res)
+    logging.info("Writing spatial expression reports...")
     pl.write_spatial_expression_reports(
         out_dir=out_dir,
         rna=rna_sub,
@@ -1097,7 +1115,9 @@ def corr_task(
         X_ge=X_ge,
         report_genes=report_genes,
     )
+    logging.info("Writing spatial cluster reports...")
     pl.write_spatial_cluster_reports(out_dir, rna_sub, ge_sub)
+    logging.info("Writing per-cluster UMI reports...")
     pl.write_umi_reports(
         out_dir=out_dir,
         rna=rna_sub,
@@ -1107,6 +1127,7 @@ def corr_task(
         report_genes=report_genes,
     )
 
+    logging.info("Writing per-cluster RNA/ATAC correlation outputs...")
     pl.write_cluster_correlation_outputs(
         out_dir=out_dir,
         rna=rna_sub,
