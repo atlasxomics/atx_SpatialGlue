@@ -127,7 +127,7 @@ def _write_plotting_gene_lists(
     }
 
 
-@custom_task(cpu=4, memory=576, storage_gib=1000)
+@custom_task(cpu=4, memory=384, storage_gib=1000)
 def glue_preprocess_task(
     project_name: str,
     wt_anndata: LatchFile,
@@ -721,7 +721,7 @@ def glue_train_task(
     return LatchDir(out_dir, f"latch:///copro_integration_analysis/{project_name}")
 
 
-@custom_task(cpu=32, memory=192, storage_gib=1000)
+@custom_task(cpu=32, memory=126, storage_gib=1000)
 def coverage_task(
     project_name: str,
     results_dir: LatchDir,
@@ -855,7 +855,7 @@ def peak2gene_task(
     return LatchDir(out_dir, remote_path)
 
 
-@custom_task(cpu=8, memory=192, storage_gib=1000)
+@custom_task(cpu=8, memory=256, storage_gib=1000)
 def corr_task(
     project_name: str,
     results_dir: LatchDir,
