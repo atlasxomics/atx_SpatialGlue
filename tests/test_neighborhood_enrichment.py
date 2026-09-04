@@ -22,7 +22,11 @@ def _fake_squidpy():
         adata.obsp["spatial_distances"] = graph
         adata.uns["spatial_neighbors"] = {"params": kwargs}
 
-    def nhood_enrichment(adata, cluster_key, **kwargs):
+    # Match Squidpy 1.2.3: library_key belongs to spatial_neighbors and is not
+    # accepted by nhood_enrichment. This explicit signature guards against the
+    # deployed compatibility regression.
+    def nhood_enrichment(adata, cluster_key, seed):
+        assert seed == utils.SEED
         n_clusters = len(adata.obs[cluster_key].cat.categories)
         values = np.arange(n_clusters * n_clusters, dtype=float).reshape(
             n_clusters, n_clusters
@@ -87,4 +91,3 @@ def test_precomputed_neighborhood_results_survive_h5ad_without_graph(
     for key in written:
         assert key in restored.uns
     assert not restored.obsp
-

@@ -877,7 +877,6 @@ def _compute_nhood_results(
         sq.gr.nhood_enrichment(
             adata,
             cluster_key=cluster_key,
-            library_key=sample_key,
             seed=SEED,
         )
 
