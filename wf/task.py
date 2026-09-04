@@ -1,3 +1,4 @@
+import copy
 import glob
 import json
 import gc
@@ -630,10 +631,16 @@ def glue_train_task(
         rna_plotting.obs["ATAC_cluster"] = ge_plotting.obs.loc[
             rna_plotting.obs_names, "ATAC_cluster"
         ].values
+        rna_plotting.obs["ATAC_cluster"] = rna_plotting.obs[
+            "ATAC_cluster"
+        ].astype("category")
     if "RNA_cluster" in rna_plotting.obs.columns:
         ge_plotting.obs["RNA_cluster"] = rna_plotting.obs.loc[
             ge_plotting.obs_names, "RNA_cluster"
         ].values
+        ge_plotting.obs["RNA_cluster"] = ge_plotting.obs[
+            "RNA_cluster"
+        ].astype("category")
     _write_plotting_gene_lists(
         rna_plotting,
         svg_payload=svg_payloads["rna"],
@@ -646,6 +653,41 @@ def glue_train_task(
     )
     utils.order_plotting_obs_columns(ge_plotting)
     utils.order_plotting_obs_columns(rna_plotting)
+
+    # Neighborhood plots use the same spatial spots for both modalities. Compute
+    # each clustering's enrichment once on metadata and coordinates only, then
+    # copy the small result matrices and matching cluster annotations to every
+    # RNA/GE output. The large Squidpy neighbor graph is deliberately discarded.
+    neighborhood_cluster_keys = [
+        key
+        for key in ("CoPro_cluster", "RNA_cluster", "ATAC_cluster")
+        if key in ge_plotting.obs.columns and key in rna_plotting.obs.columns
+    ]
+    neighborhood_uns_keys = []
+    if neighborhood_cluster_keys and "spatial_offset" in ge_plotting.obsm:
+        neighborhood_uns_keys = utils.precompute_neighborhood_enrichment(
+            ge_plotting,
+            cluster_keys=neighborhood_cluster_keys,
+            group_keys=("sample", "condition"),
+            sample_key="sample",
+            spatial_key="spatial_offset",
+        )
+    else:
+        logging.warning(
+            "Skipping neighborhood enrichment because cluster annotations or "
+            "spatial_offset coordinates are unavailable."
+        )
+    for key in neighborhood_uns_keys:
+        rna_plotting.uns[key] = copy.deepcopy(ge_plotting.uns[key])
+
+    for result_obj in (rna_result, ge_result):
+        for key in neighborhood_cluster_keys:
+            result_obj.obs[key] = ge_plotting.obs.loc[
+                result_obj.obs_names, key
+            ].astype(str).values
+            result_obj.obs[key] = result_obj.obs[key].astype("category")
+        for key in neighborhood_uns_keys:
+            result_obj.uns[key] = copy.deepcopy(ge_plotting.uns[key])
 
     ge_plotting.write(f"{out_dir}/atac_gs_copro_sm.h5ad")
     rna_plotting.write(f"{out_dir}/rna_copro_sm.h5ad")

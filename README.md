@@ -36,15 +36,22 @@ Some files and subdirectories are conditional. For example, `atac_tiles_copro.h5
 
 | Output | Description |
 | --- | --- |
-| `rna_copro.h5ad` | Full RNA AnnData object after barcode alignment, SpatialGlue embedding, UMAP, selected/merged Leiden cluster labels, and downstream annotations. Contains `obs["sg_clusters"]`, SpatialGlue embedding data, and cluster metadata used by downstream tasks. |
-| `rna_copro_sm.h5ad` | Smaller plotting-oriented RNA AnnData object with dense float16 expression values and selected observation columns. This is optimized for interactive plotting rather than full downstream analysis. |
-| `atac_gs_copro.h5ad` | Full gene accessibility AnnData object with matched cells, SpatialGlue-derived cluster labels, embedding metadata, and downstream annotations. |
-| `atac_gs_copro_sm.h5ad` | Smaller plotting-oriented gene accessibility AnnData object with dense float16 values and selected observation columns. |
+| `rna_copro.h5ad` | Full RNA AnnData object after barcode alignment, SpatialGlue embedding, UMAP, selected/merged Leiden cluster labels, and downstream annotations. Contains `obs["sg_clusters"]`, SpatialGlue embedding data, cluster metadata, and Squidpy neighborhood-enrichment results used by downstream tasks. |
+| `rna_copro_sm.h5ad` | Smaller plotting-oriented RNA AnnData object with dense float16 expression values, selected observation columns, and neighborhood-enrichment results. This is optimized for interactive plotting rather than full downstream analysis. |
+| `atac_gs_copro.h5ad` | Full gene accessibility AnnData object with matched cells, SpatialGlue-derived cluster labels, embedding metadata, downstream annotations, and neighborhood-enrichment results. |
+| `atac_gs_copro_sm.h5ad` | Smaller plotting-oriented gene accessibility AnnData object with dense float16 values, selected observation columns, and neighborhood-enrichment results. |
 | `atac_tiles_copro.h5ad` | Clustered ATAC tile AnnData object. Produced only when `atac_anndata` is supplied. |
 | `SpatialGlue_model.pickle` | Pickled SpatialGlue training output containing the learned embedding and attention weights. This can be supplied to `spatialglue_model_pickle` in a later run to reuse the model output and skip training. |
 | `coverage_manifest.csv` | Manifest recording which core H5AD outputs were written and whether ATAC tile data was available for coverage export. |
 
 The main cluster label used by downstream outputs is `sg_clusters`. The workflow also stores raw and merged Leiden labels for each resolution in the sweep, using names such as `sg_leiden_0p4` and `sg_leiden_0p4_merged`.
+
+Both RNA and gene-accessibility outputs contain Squidpy results for
+`CoPro_cluster`, `RNA_cluster`, and `ATAC_cluster` under
+`uns["<cluster-key>_nhood_enrichment"]`. Results split by `sample` and
+`condition` are stored under
+`uns["<cluster-key>_nhood_enrichment_by_group"]`. The reduced plotting files
+retain these compact matrices but omit the large spatial-neighbor graph.
 
 ## Tables
 
