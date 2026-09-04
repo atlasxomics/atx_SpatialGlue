@@ -20,6 +20,12 @@ def _as_1d_array(values) -> np.ndarray:
     return np.asarray(values).ravel()
 
 
+def _as_2d_array(values) -> np.ndarray:
+    if sp.issparse(values):
+        return np.asarray(values.toarray())
+    return np.asarray(values)
+
+
 def plot_corr_volcano_broken(
     corr,
     outpath="corr_volcano.png",
@@ -653,11 +659,19 @@ def write_spatial_expression_reports(
     selected = [g for g in report_genes if g in gene_to_idx][:12]
     if not selected:
         return
+    selected_indices = np.asarray([gene_to_idx[g] for g in selected], dtype=int)
+    # Load these few columns once. Previously every sample/gene panel triggered
+    # another sparse slice through the full source matrix.
+    selected_values = {
+        "RNA": _as_2d_array(X_rna[:, selected_indices]),
+        "ATAC GE": _as_2d_array(X_ge[:, selected_indices]),
+    }
 
-    for modality, matrix, adata, fname, cmap in [
-        ("RNA", X_rna, rna, "genes_of_interest/rna_spatial_expression.png", "Spectral_r"),
-        ("ATAC GE", X_ge, ge, "genes_of_interest/atac_ge_spatial_expression.png", "Spectral_r"),
+    for modality, adata, fname, cmap in [
+        ("RNA", rna, "genes_of_interest/rna_spatial_expression.png", "Spectral_r"),
+        ("ATAC GE", ge, "genes_of_interest/atac_ge_spatial_expression.png", "Spectral_r"),
     ]:
+        values = selected_values[modality]
         for sample in sorted(set(samples)):
             mask = samples == sample
             ncols = min(3, len(selected))
@@ -670,11 +684,10 @@ def write_spatial_expression_reports(
             )
             axes = axes.ravel()
             for i, gene in enumerate(selected):
-                idx = gene_to_idx[gene]
                 scatter_spatial(
                     axes[i],
                     adata.obsm["spatial"][mask],
-                    _as_1d_array(matrix[mask, idx]),
+                    values[mask, i],
                     f"{sample} {modality}: {gene}",
                     cmap=cmap,
                 )
@@ -686,19 +699,18 @@ def write_spatial_expression_reports(
 
     for sample in sorted(set(samples)):
         mask = samples == sample
-        for gene in selected:
-            idx = gene_to_idx[gene]
+        for i, gene in enumerate(selected):
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
             scatter_spatial(
                 axes[0],
                 rna.obsm["spatial"][mask],
-                _as_1d_array(X_rna[mask, idx]),
+                selected_values["RNA"][mask, i],
                 f"{sample} RNA: {gene}",
             )
             scatter_spatial(
                 axes[1],
                 ge.obsm["spatial"][mask],
-                _as_1d_array(X_ge[mask, idx]),
+                selected_values["ATAC GE"][mask, i],
                 f"{sample} ATAC GE: {gene}",
             )
             fig.tight_layout()
@@ -786,19 +798,30 @@ def write_umi_reports(
 
     labels = rna.obs[cluster_key].astype(str).values
     clusters = sorted(set(labels), key=utils.cluster_sort_key)
+    cluster_masks = {cluster: labels == cluster for cluster in clusters}
+    umi_by_gene = {}
+    for gene in selected:
+        vals = _as_1d_array(X_counts[:, gene_to_idx[gene]])
+        umi_by_gene[gene] = {}
+        for cluster, mask in cluster_masks.items():
+            cluster_vals = vals[mask]
+            umi_by_gene[gene][cluster] = {
+                "total_umi": float(cluster_vals.sum()),
+                "mean_umi_per_spot": float(cluster_vals.mean()),
+                "pct_spots_expressing": float((cluster_vals > 0).mean() * 100),
+            }
+
     rows = []
     for cluster in clusters:
-        mask = labels == cluster
+        mask = cluster_masks[cluster]
         n_spots = int(mask.sum())
         for gene in selected:
-            vals = _as_1d_array(X_counts[mask, gene_to_idx[gene]])
+            gene_stats = umi_by_gene[gene][cluster]
             rows.append({
                 "cluster": cluster,
                 "n_spots_in_cluster": n_spots,
                 "gene": gene,
-                "total_umi": float(vals.sum()),
-                "mean_umi_per_spot": float(vals.mean()),
-                "pct_spots_expressing": float((vals > 0).mean() * 100),
+                **gene_stats,
             })
 
     umi = pd.DataFrame(rows)
@@ -809,8 +832,9 @@ def write_umi_reports(
     plot_genes = selected[:12]
     for page_idx, gene in enumerate(plot_genes, start=1):
         idx = gene_to_idx[gene]
+        expression = _as_1d_array(X_expr[:, idx])
         fig, ax = plt.subplots(figsize=(max(5, 0.6 * len(clusters)), 4))
-        data = [_as_1d_array(X_expr[labels == cluster, idx]) for cluster in clusters]
+        data = [expression[cluster_masks[cluster]] for cluster in clusters]
         ax.violinplot(data, showmeans=True, showextrema=False)
         ax.set_xticks(np.arange(1, len(clusters) + 1))
         ax.set_xticklabels(clusters, rotation=45)
@@ -979,20 +1003,24 @@ def write_cluster_correlation_outputs(
         logging.warning("No genes available for per-cluster correlation outputs.")
         return
 
+    selected_indices = np.asarray(
+        [gene_to_idx[gene] for gene in selected_genes], dtype=int
+    )
+    rna_values = _as_2d_array(X_rna[:, selected_indices])
+    ge_values = _as_2d_array(X_ge[:, selected_indices])
     cluster_labels = rna.obs[cluster_key].astype(str).values
     clusters = sorted(set(cluster_labels), key=utils.cluster_sort_key)
     rows = []
     for cluster in clusters:
         mask = cluster_labels == cluster
         n_spots = int(mask.sum())
-        for gene in selected_genes:
-            idx = gene_to_idx[gene]
+        for gene_idx, gene in enumerate(selected_genes):
             rows.append({
                 "cluster": cluster,
                 "n_spots": n_spots,
                 "gene": gene,
-                "mean_rna_lognorm": float(_as_1d_array(X_rna[mask, idx]).mean()),
-                "mean_atac_ge": float(_as_1d_array(X_ge[mask, idx]).mean()),
+                "mean_rna_lognorm": float(rna_values[mask, gene_idx].mean()),
+                "mean_atac_ge": float(ge_values[mask, gene_idx].mean()),
             })
 
     per_cluster = pd.DataFrame(rows)

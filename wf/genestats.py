@@ -80,14 +80,43 @@ def get_rna_counts_matrix(adata_view):
 
 
 def compute_gene_stats_matrix(
-    X, gene_names, prefix: str, include_minmax_nonzero: bool = True
+    X,
+    gene_names,
+    prefix: str,
+    include_minmax_nonzero: bool = True,
+    chunk_size: int = 256,
 ) -> pd.DataFrame:
-    """Compute gene-level stats from a (cells x genes) matrix X."""
-    n_cells = X.shape[0]
-    s = _colsum(X)
-    mu = _colmean(X)
-    var = _colvar(X)
-    nnz = _colnnz(X)
+    """Compute gene-level stats while materializing at most one gene chunk."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0.")
+    n_cells, n_genes = X.shape
+    s = np.empty(n_genes, dtype=np.float64)
+    mu = np.empty(n_genes, dtype=np.float64)
+    var = np.empty(n_genes, dtype=np.float64)
+    nnz = np.empty(n_genes, dtype=np.int64)
+    if include_minmax_nonzero:
+        mn = np.empty(n_genes, dtype=np.float64)
+        mx = np.empty(n_genes, dtype=np.float64)
+
+    for start in range(0, n_genes, chunk_size):
+        end = min(start + chunk_size, n_genes)
+        block = X[:, start:end]
+        block_sum = _colsum(block)
+        block_mean = block_sum / max(n_cells, 1)
+        if sparse.issparse(block):
+            block_sq_sum = np.asarray(block.power(2).sum(axis=0)).ravel()
+        else:
+            block = np.asarray(block)
+            block_sq_sum = np.square(block).sum(axis=0)
+        s[start:end] = block_sum
+        mu[start:end] = block_mean
+        var[start:end] = block_sq_sum / max(n_cells, 1) - block_mean**2
+        nnz[start:end] = _colnnz(block)
+        if include_minmax_nonzero:
+            block_min, block_max = _minmax_nonzero(block)
+            mn[start:end] = block_min
+            mx[start:end] = block_max
+
     det_rate = nnz / max(n_cells, 1)
     nz_mean = np.divide(
         s, nnz, out=np.zeros_like(s, dtype=float), where=nnz > 0
@@ -106,7 +135,6 @@ def compute_gene_stats_matrix(
     }
 
     if include_minmax_nonzero:
-        mn, mx = _minmax_nonzero(X)
         d[f"{prefix}_min_nz"] = mn
         d[f"{prefix}_max_nz"] = mx
 
