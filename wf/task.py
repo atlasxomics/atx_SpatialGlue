@@ -740,8 +740,8 @@ def glue_train_task(
         for key in neighborhood_uns_keys:
             result_obj.uns[key] = copy.deepcopy(ge_plotting.uns[key])
 
-    ge_plotting.write(f"{out_dir}/atac_gs_copro_sm.h5ad")
-    rna_plotting.write(f"{out_dir}/rna_copro_sm.h5ad")
+    utils.write_gene_chunked_h5ad(ge_plotting, f"{out_dir}/atac_gs_copro_sm.h5ad")
+    utils.write_gene_chunked_h5ad(rna_plotting, f"{out_dir}/rna_copro_sm.h5ad")
     ge_result.write(f"{out_dir}/atac_gs_copro.h5ad")
     rna_result.write(f"{out_dir}/rna_copro.h5ad")
     pd.DataFrame([{

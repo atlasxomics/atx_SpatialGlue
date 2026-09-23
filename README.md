@@ -51,7 +51,11 @@ Both RNA and gene-accessibility outputs contain Squidpy results for
 `uns["<cluster-key>_nhood_enrichment"]`. Results split by `sample` and
 `condition` are stored under
 `uns["<cluster-key>_nhood_enrichment_by_group"]`. The reduced plotting files
-retain these compact matrices but omit the large spatial-neighbor graph.
+retain these compact matrices but omit the large spatial-neighbor graph. Both
+`rna_copro_sm.h5ad` and `atac_gs_copro_sm.h5ad` store dense float16 `X` with
+HDF5 chunks shaped `(n_obs, 1)` for fast backed single-gene reads, matching
+the reduced gene objects in ATX_snap and archrproject. Matrix values and
+metadata are preserved; rechunking streams 512 genes at a time.
 
 ## Tables
 

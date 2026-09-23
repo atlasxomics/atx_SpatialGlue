@@ -6,6 +6,7 @@ import os
 import re
 import resource
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -22,6 +23,70 @@ if TYPE_CHECKING:
 _BARCODE_REGEX = re.compile(r"([ATCG]{16})")
 _DONOR_PREFIX_REGEX = re.compile(r"(D\d{5})")
 _GENE_SYMBOL_REGEX = re.compile(r"^(?!ENS[A-Z]*\d+)[A-Za-z][A-Za-z0-9_.-]{0,30}$")
+
+
+def rechunk_dense_x_for_gene_access(
+    input_path: Path,
+    output_path: Path,
+    gene_block: int = 1,
+    stream_block: int = 512,
+) -> None:
+    """Stream-copy an H5AD with dense ``X`` into gene-aligned chunks.
+
+    All fields other than ``X`` are copied verbatim. The cells-by-genes
+    orientation is retained while each HDF5 chunk spans all cells and only
+    ``gene_block`` genes, making backed single-gene reads fast.
+    """
+    import h5py
+
+    with h5py.File(input_path, "r") as src, h5py.File(output_path, "w") as dst:
+        for key, value in src.attrs.items():
+            dst.attrs[key] = value
+        for key in src.keys():
+            if key != "X":
+                src.copy(key, dst)
+
+        xsrc = src["X"]
+        if isinstance(xsrc, h5py.Group):
+            raise ValueError(
+                "X is stored sparse (an HDF5 group); gene rechunking requires "
+                "dense X."
+            )
+
+        n_obs, n_var = xsrc.shape
+        if n_obs == 0 or n_var == 0:
+            raise ValueError("Cannot gene-rechunk an AnnData object with an empty X.")
+        if gene_block < 1 or stream_block < 1:
+            raise ValueError("gene_block and stream_block must both be positive.")
+
+        x_attrs = dict(xsrc.attrs)
+        chunk_width = min(gene_block, n_var)
+        dset = dst.create_dataset(
+            "X",
+            shape=(n_obs, n_var),
+            dtype=xsrc.dtype,
+            chunks=(n_obs, chunk_width),
+        )
+        for start in range(0, n_var, stream_block):
+            stop = min(start + stream_block, n_var)
+            dset[:, start:stop] = xsrc[:, start:stop]
+        for key, value in x_attrs.items():
+            dset.attrs[key] = value
+
+
+def write_gene_chunked_h5ad(adata: AnnData, output_path) -> None:
+    """Write a plotting object with one gene per chunk and publish atomically."""
+    output_path = Path(output_path)
+    raw_path = output_path.with_name(f".{output_path.stem}.unrechunked.h5ad")
+    chunked_path = output_path.with_name(f".{output_path.stem}.rechunking.h5ad")
+    logging.info("Saving %s with gene-aligned X chunks...", output_path.name)
+    try:
+        adata.write_h5ad(raw_path)
+        rechunk_dense_x_for_gene_access(raw_path, chunked_path)
+        chunked_path.replace(output_path)
+    finally:
+        raw_path.unlink(missing_ok=True)
+        chunked_path.unlink(missing_ok=True)
 
 
 def clean_ids(ix):
