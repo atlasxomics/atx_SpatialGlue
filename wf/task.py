@@ -48,15 +48,15 @@ def write_plots_artifact(out_dir: str, data_path: str, genome: str) -> None:
         bindings=PlotsArtifactBindings(
             plot_templates=[
                 PlotsArtifactTemplate(
-                    template_id="1552",
+                    template_id="1585",
                     widgets=[
                         Widget(
-                            transform_id="491220",
+                            transform_id="493712",
                             key="data_path",
                             value=data_path,
                         ),
                         Widget(
-                            transform_id="491216",
+                            transform_id="493701",
                             key="coverages_genome",
                             value=genome,
                         ),
